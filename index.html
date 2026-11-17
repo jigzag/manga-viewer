@@ -1,0 +1,2036 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<!-- Like opening the file locally: sites that block hotlinking see no referring page. -->
+<meta name="referrer" content="no-referrer">
+<meta name="theme-color" content="#111111">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon-192.png">
+<link rel="apple-touch-icon" href="icon-192.png">
+<title>見開きビューア</title>
+<style>
+  :root {
+    --bg: #111;
+    --fg: #eee;
+    --muted: #999;
+    --bar: rgba(20, 20, 20, 0.92);
+    --accent: #4da3ff;
+    --new: #ffb84d;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: var(--bg); color: var(--fg);
+    font-family: system-ui, "Segoe UI", "Hiragino Sans", "Yu Gothic UI", sans-serif; overflow: hidden; }
+
+  #stage { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center;
+    user-select: none; cursor: pointer; }
+  #stage.rtl { flex-direction: row-reverse; }
+  #stage img { display: block; max-height: 100vh; object-fit: contain; }
+  #stage.two img { max-width: 50vw; }
+  #stage.one img { max-width: 100vw; }
+  /* Scale small pages up to the full height (width still capped; contain keeps the ratio). */
+  #stage.fit img { height: 100vh; width: auto; }
+
+  #msg { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center;
+    color: var(--muted); font-size: 15px; pointer-events: none; text-align: center; padding: 16px; white-space: pre-line; word-break: break-all; }
+
+  #bar { position: fixed; left: 0; right: 0; top: 0; background: var(--bar); padding: 8px 12px;
+    display: flex; flex-wrap: wrap; gap: 8px; align-items: center; font-size: 13px;
+    transition: opacity .2s; z-index: 10; }
+  #bar.hidden { opacity: 0; pointer-events: none; }
+  #bar input[type=text] { width: 22em; max-width: 60vw; background: #222; color: var(--fg);
+    border: 1px solid #444; border-radius: 4px; padding: 4px 6px; font-size: 13px; }
+  #bar button { background: #2a2a2a; color: var(--fg); border: 1px solid #444; border-radius: 4px;
+    padding: 4px 10px; font-size: 13px; cursor: pointer; }
+  #bar button:hover { border-color: var(--accent); }
+  #bar button.on { background: #1d3a5c; border-color: var(--accent); }
+  #bar .sep { width: 1px; height: 20px; background: #444; }
+  #bar .help { color: var(--muted); }
+
+  #pageno { position: fixed; bottom: 10px; left: 50%; transform: translateX(-50%);
+    background: var(--bar); padding: 4px 12px; border-radius: 12px; font-size: 13px;
+    transition: opacity .2s; z-index: 10; }
+  #pageno.hidden { opacity: 0; }
+
+  /* Blocks the stage (but not the bar) while a chapter or page is loading. */
+  #busy { position: fixed; inset: 0; z-index: 5; display: none; flex-direction: column; gap: 14px;
+    align-items: center; justify-content: center; background: rgba(0, 0, 0, 0.55);
+    font-size: 15px; cursor: wait; }
+  #busy.on { display: flex; }
+  #busy .spin { width: 36px; height: 36px; border: 3px solid #555; border-top-color: var(--accent);
+    border-radius: 50%; animation: spin .8s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  #lists { position: fixed; top: 52px; right: 12px; width: min(460px, calc(100vw - 24px));
+    max-height: calc(100vh - 72px); background: #1b1b1b; border: 1px solid #444; border-radius: 8px;
+    z-index: 20; display: none; flex-direction: column; font-size: 13px; box-shadow: 0 6px 24px rgba(0,0,0,.6); }
+  #lists.on { display: flex; }
+  #lists header { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; padding: 8px; border-bottom: 1px solid #333; }
+  #lists header button { white-space: nowrap; }
+  #lists header .grow { flex: 1; }
+  #lists button { background: #2a2a2a; color: var(--fg); border: 1px solid #444; border-radius: 4px;
+    padding: 3px 10px; font-size: 13px; cursor: pointer; }
+  #lists button:hover { border-color: var(--accent); }
+  #lists button.on { background: #1d3a5c; border-color: var(--accent); }
+  #lists ul { list-style: none; margin: 0; padding: 4px; overflow-y: auto; }
+  #lists li { display: flex; gap: 6px; align-items: center; padding: 6px 8px; border-radius: 6px; }
+  #lists li:hover { background: #262626; }
+  #lists li.here { background: #1d2a3a; }
+  #lists li .main { flex: 1; min-width: 0; cursor: pointer; }
+  #lists li .thumb { flex: none; width: 48px; height: 68px; object-fit: cover; border-radius: 4px;
+    background: #2a2a2a; cursor: pointer; }  #lists li .t { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  #lists li .s { color: var(--muted); font-size: 12px; }
+  #lists li button { padding: 2px 7px; }
+  #lists li.empty { color: var(--muted); justify-content: center; padding: 20px; }
+  #lists li.tools { position: sticky; top: -4px; background: #1b1b1b; z-index: 1; }
+  #lists li.tools:hover { background: #1b1b1b; }
+  #lists li.tools .grow { flex: 1; }
+  #lists li.tools label { display: flex; gap: 4px; align-items: center; cursor: pointer; white-space: nowrap; }
+  #lists li.grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(58px, 1fr)); gap: 4px; }
+  #lists li.grid:hover { background: none; }
+  #lists li.grid button { padding: 5px 0; }
+  #lists li.grid button.read { color: var(--muted); }
+  #lists li.grid button.cur { background: #1d3a5c; border-color: var(--accent); }
+  #lists li.grid button.manual { border-style: dashed; }
+  #lists li.grid button.new { border-color: var(--new); color: var(--new); font-weight: bold; }
+  #lists li .newtag { color: var(--new); font-size: 12px; margin-left: 8px; cursor: pointer; }
+  #lists li .newtag:hover { text-decoration: underline; }
+  #bar button.new { color: var(--new); border-color: var(--new); }
+  #home header button.new { color: var(--new); border-color: var(--new); }
+
+  #toast { position: fixed; right: 16px; bottom: 48px; z-index: 30; display: none;
+    max-width: min(380px, calc(100vw - 32px)); padding: 10px 14px; border-radius: 8px;
+    background: #2b2416; border: 1px solid var(--new); color: var(--fg); font-size: 13px;
+    white-space: pre-line; cursor: pointer; box-shadow: 0 6px 24px rgba(0,0,0,.6); }
+  #toast.on { display: block; }
+
+  /* Home: every series read, as cards. Covers the reader (and its bar). */
+  #home { position: fixed; inset: 0; z-index: 25; display: none; overflow-y: auto; background: var(--bg); }
+  #home.on { display: block; }
+  #home .inner { max-width: 1200px; margin: 0 auto; padding: 16px; }
+  #home header { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+  #home h1 { font-size: 20px; margin: 0; }
+  #home h2 { font-size: 15px; color: var(--muted); margin: 0; font-weight: normal; }
+  #home .sec { display: flex; align-items: center; gap: 10px; margin: 24px 0 10px; }
+  #home select { background: #222; color: var(--fg); border: 1px solid #444; border-radius: 4px;
+    padding: 3px 6px; font-size: 12px; }
+  #home .grow { flex: 1; }
+  #home button { background: #2a2a2a; color: var(--fg); border: 1px solid #444; border-radius: 4px;
+    padding: 5px 12px; font-size: 13px; cursor: pointer; white-space: nowrap; }
+  #home button:hover { border-color: var(--accent); }
+  #home button:disabled { opacity: .6; cursor: default; }
+  #home .open { display: flex; gap: 8px; margin-top: 14px; }
+  #home .open input { flex: 1; min-width: 0; background: #222; color: var(--fg); border: 1px solid #444;
+    border-radius: 4px; padding: 6px 8px; font-size: 13px; }
+  #home { --card-w: 150px; }
+  #home .cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(var(--card-w), 1fr)); gap: 14px; }
+  #home .sizes { display: inline-flex; }
+  #home .sizes button { padding: 3px 9px; font-size: 12px; border-radius: 0; }
+  #home .sizes button:first-child { border-radius: 4px 0 0 4px; }
+  #home .sizes button:last-child { border-radius: 0 4px 4px 0; }
+  #home .sizes button + button { border-left: none; }
+  #home .sizes button.on { background: #1d3a5c; border-color: var(--accent); }
+  #home .card { position: relative; cursor: pointer; min-width: 0; }
+  #home .card .cover { display: block; width: 100%; aspect-ratio: 3 / 4; object-fit: cover; border-radius: 6px;
+    background: #222; border: 1px solid #333; }
+  #home .card:hover .cover { border-color: var(--accent); }
+  #home .card.has-new .cover { border-color: var(--new); }
+  #home .card .t { margin-top: 6px; font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  #home .card .s { font-size: 12px; color: var(--muted); }
+  #home .card .newtag { display: inline-block; margin-top: 3px; font-size: 12px; color: var(--new); }
+  #home .card .newtag:hover { text-decoration: underline; }
+  #home .card .acts { position: absolute; top: 6px; right: 6px; display: flex; gap: 4px; opacity: 0; transition: opacity .15s; }
+  #home .card:hover .acts { opacity: 1; }
+  #home .card .acts button { padding: 2px 7px; background: rgba(20, 20, 20, .85); }
+  #home .empty { color: var(--muted); font-size: 13px; }
+  @media (hover: none) { #home .card .acts { opacity: 1; } }
+
+  /* Cover picker: candidates found by title, over the home screen. */
+  #coverPick { position: fixed; inset: 0; z-index: 28; display: none; align-items: center; justify-content: center;
+    background: rgba(0, 0, 0, .6); padding: 16px; }
+  #coverPick.on { display: flex; }
+  #coverPick .box { width: min(820px, 100%); max-height: calc(100vh - 32px); display: flex; flex-direction: column;
+    background: #1b1b1b; border: 1px solid #444; border-radius: 8px; box-shadow: 0 6px 24px rgba(0,0,0,.6); }
+  #coverPick header, #coverPick footer { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; padding: 10px; }
+  #coverPick header { border-bottom: 1px solid #333; }
+  #coverPick footer { border-top: 1px solid #333; }
+  #coverPick .grow { flex: 1; }
+  #coverPick input { flex: 1 1 200px; min-width: 0; background: #222; color: var(--fg); border: 1px solid #444;
+    border-radius: 4px; padding: 6px 8px; font-size: 13px; }
+  #coverPick button { background: #2a2a2a; color: var(--fg); border: 1px solid #444; border-radius: 4px;
+    padding: 5px 12px; font-size: 13px; cursor: pointer; white-space: nowrap; }
+  #coverPick button:hover { border-color: var(--accent); }
+  #coverPick .status { padding: 8px 12px 0; font-size: 12px; color: var(--muted); }
+  #coverPick .grid { overflow-y: auto; padding: 10px; display: grid; gap: 12px;
+    grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); }
+  #coverPick .cand { cursor: pointer; min-width: 0; }
+  #coverPick .cand img { display: block; width: 100%; aspect-ratio: 3 / 4; object-fit: cover; border-radius: 6px;
+    background: #222; border: 2px solid transparent; }
+  #coverPick .cand:hover img { border-color: var(--accent); }
+  #coverPick .cand .t { margin-top: 4px; font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  #coverPick .cand .s { font-size: 11px; color: var(--muted); }
+  #toast::first-line { color: var(--new); font-weight: bold; }
+</style>
+</head>
+<body>
+<div id="stage" class="rtl two"></div>
+<div id="msg"></div>
+<div id="busy"><div class="spin"></div><div id="busyText"></div></div>
+
+<div id="bar">
+  <input type="text" id="src" placeholder="画像のURL（…/chapter-12/001.jpg）か FC2アルバムのURL">
+  <button id="go">開く</button>
+  <span class="sep"></span>
+  <button id="prevCh" title="前の話 [P]">◀ 前の話</button>
+  <button id="nextCh" title="次の話 [N]">次の話 ▶</button>
+  <button id="skipFracsBtn" title="オン: 整数の話があれば 12.5 話などは飛ばす／オフ: 小数の話も順に読む [X]">小数を飛ばす</button>
+  <span class="sep"></span>
+  <button id="dirBtn" title="読む方向 [D]">右開き</button>
+  <button id="spreadBtn" title="見開き/単ページ [S]">見開き</button>
+  <button id="coverBtn" title="1ページ目を単独表示 [C]">表紙単独</button>
+  <button id="fitBtn" title="小さい画像も縦いっぱいに拡大 [Z]">縦いっぱい</button>
+  <button id="pageBack" title="1ページ戻る [, / Shift+矢印]">1P戻る</button>
+  <button id="pageFwd" title="1ページ進む [. / Shift+矢印]">1P進む</button>
+  <button id="fsBtn" title="全画面 [F]">全画面</button>
+  <span class="sep"></span>
+  <button id="listBtn" title="履歴・話一覧 [L]">一覧</button>
+  <button id="chListBtn" title="話一覧から選ぶ [G]">話一覧</button>
+  <button id="homeBtn" title="ホーム（作品の一覧） [M]">ホーム</button>
+  <span class="help">← → / Space / ホイール / クリックでページ送り（最後で続けると次の話へ）・Shift+← → / , . で1ページずつ・Home End・Z 縦いっぱい・X 小数を飛ばす・L 一覧・G 話一覧・M ホーム・H でバーを固定／自動で隠す</span>
+</div>
+<div id="pageno"></div>
+
+<div id="lists">
+  <header>
+    <button id="tabHist">履歴</button>
+    <button id="tabCh">話一覧</button>
+    <span class="grow"></span>
+    <button id="readAll" title="すべての作品の新着を既読にする" style="display:none">すべて既読</button>
+    <button id="checkUpd">新着チェック</button>
+    <button id="clearHist" title="履歴をすべて消す">履歴を消去</button>
+    <button id="closeLists" title="閉じる [Esc]">✕</button>
+  </header>
+  <ul id="listItems"></ul>
+</div>
+<div id="toast" title="クリックでホームを開く"></div>
+
+<div id="coverPick">
+  <div class="box">
+    <header>
+      <input type="text" id="cpQuery" placeholder="作品名">
+      <button id="cpSearch">検索</button>
+      <span class="grow"></span>
+      <button id="cpClose" title="閉じる [Esc]">✕</button>
+    </header>
+    <div class="status" id="cpStatus"></div>
+    <div class="grid" id="cpGrid"></div>
+    <footer>
+      <button id="cpWeb" title="Google画像検索を別のタブで開く。画像を右クリック →「画像アドレスをコピー」して「URLを入力」へ">Googleで画像検索</button>
+      <button id="cpUrl">URLを入力</button>
+      <span class="grow"></span>
+      <button id="cpReset" title="読んでいるページの画像に戻す">元に戻す</button>
+    </footer>
+  </div>
+</div>
+
+<div id="home">
+  <div class="inner">
+    <header>
+      <h1>見開きビューア</h1>
+      <span class="grow"></span>
+      <button id="homeReadAll" title="すべての作品の新着を既読にする">すべて既読</button>
+      <button id="homeCheck">新着チェック</button>
+      <button id="syncBtn">同期の設定</button>
+      <button id="syncSet" title="同期のトークンを変える・同期を止める" style="display:none">⚙</button>
+      <button id="homeClose" title="読書に戻る [Esc / M]">✕</button>
+    </header>
+    <div class="open">
+      <input type="text" id="homeSrc" placeholder="画像のURL（…/chapter-12/001.jpg）か FC2アルバムのURL">
+      <button id="homeGo">開く</button>
+    </div>
+    <div class="sec"><h2>作品</h2><select id="sortSeries" title="並び順"></select>
+      <span class="sizes" id="cardSizes" title="表紙の大きさ"></span></div>
+    <div class="cards" id="homeSeries"></div>
+  </div>
+</div>
+
+<script>
+const $ = id => document.getElementById(id);
+const stage = $('stage'), msg = $('msg'), bar = $('bar'), pageno = $('pageno');
+
+const HOST = 'http://galaxyheavyblow.web.fc2.com/fc2-imageviewer';
+const PROBE_CONCURRENCY = 4;
+const PROBE_TIMEOUT = 10000;
+const PAGE_RETRY_DELAY = 1000;
+const MAX_CHAPTER_GAP = 20; // how many missing chapter numbers in a row to look past
+const GAP_WINDOW = 5;       // whole numbers probed together while looking past a gap
+
+const store = {
+  get(k, d) { try { const v = localStorage.getItem('mv.' + k); return v === null ? d : JSON.parse(v); } catch { return d; } },
+  set(k, v) {
+    store.beforeSet?.(k, v); // sync: note which entries change
+    try { localStorage.setItem('mv.' + k, JSON.stringify(v)); }
+    catch {
+      // Usually the browser's storage is full: say so once instead of losing data silently.
+      if (!store.warned) { store.warned = true; setTimeout(() => alert('ブラウザの保存容量がいっぱいで、保存できませんでした。\n使わない作品を削除してください。')); }
+    }
+  },
+};
+
+// A source is a URL template: {ch} = chapter number, {p} = page number,
+// {sep} = the '_' or '-' after "chapter", {pp} = file-name prefix before the page number
+// ("page_0.webp" vs "0.webp"), {ext} = image extension. Sites mix all three per chapter,
+// so the current ones are tracked and the others tried as fallbacks (a "variant").
+// {hp} = a numbered host prefix: the same series lives on example.com and 2.example.com.
+const fc2Src = (aid, iid) => ({ tpl: `${HOST}/${aid}/{ch}/{p}.jpg`, ch: iid, chPad: 0, pad: 0, first: 1, aid });
+const EXTS = ['webp', 'jpg', 'jpeg'];
+const PREFIXES = ['page_', '', 'image_'];
+const HOST_PREFIXES = ['', '1.', '2.', '3.'];
+
+// "https://2.example.com/…" → ["https://{hp}example.com/…", "2."]; [tpl, undefined] if the
+// template already has {hp} or the host can't take one (an IP address).
+function splitHostPrefix(tpl) {
+  const m = !tpl.includes('{hp}') && tpl.match(/^(https?:\/\/)(\d+\.)?([^/:?#]+)/i);
+  if (!m || /^[\d.]+$/.test((m[2] || '') + m[3])) return [tpl, undefined];
+  return [m[1] + '{hp}' + tpl.slice(m[1].length + (m[2] || '').length), m[2] || ''];
+}
+
+// Sources saved before {sep}/{pp}/{ext}/{hp} existed have them baked into the template.
+function upgradeSrc(src) {
+  if (!src || src.aid) return src;
+  let { tpl } = src, extra = {};
+  const [h, hp] = splitHostPrefix(tpl);
+  if (hp !== undefined) { tpl = h; extra.hp = hp; }
+  const s = !tpl.includes('{sep}') && tpl.match(/(chapter)([-_])\{ch\}/i);
+  if (s) { tpl = tpl.replace(s[0], s[1] + '{sep}{ch}'); extra.sep = s[2]; }
+  const p = !tpl.includes('{pp}') && tpl.match(/\/([^/{}]*)\{p\}/);
+  if (p) { tpl = tpl.replace(p[0], '/{pp}{p}'); extra.pp = p[1]; }
+  const e = !tpl.includes('{ext}') && tpl.match(/\{p\}\.(jpe?g|png|webp|gif|avif)/i);
+  if (e) { tpl = tpl.replace(e[0], '{p}.{ext}'); extra.ext = e[1]; }
+  return { ...src, tpl, ...extra };
+}
+
+const state = {
+  src: upgradeSrc(store.get('src', null)) || fc2Src(store.get('aid', 1), store.get('iid', 162)),
+  rtl: store.get('rtl', true),
+  spread: store.get('spread', true),
+  cover: store.get('cover', true),
+  fit: store.get('fit', true),
+  skipFracs: store.get('skipFracs', true), // next/prev: whole numbers win over decimals
+  pages: [],      // {img, w, h} in order; index 0 = page 1
+  total: null,    // known once probing hits a missing page
+  pos: 0,         // index of first page of the current view
+  anchor: -1,     // page forced to start a view (set by 1-page steps), -1 = none
+  waitFwd: false, // user stepped past the loaded pages; advance once the next one arrives
+  loading: null,  // busy text while the current view can't be shown yet
+  searching: null,// {text} while probing for a neighbouring chapter
+  loadToken: 0,
+};
+
+// ---- busy overlay --------------------------------------------------------
+
+const isBusy = () => !!(state.searching || state.loading);
+function updateBusy() {
+  const text = state.searching?.text || state.loading;
+  $('busy').classList.toggle('on', !!text);
+  $('busyText').textContent = text || '';
+}
+
+// ---- loading -------------------------------------------------------------
+
+const zpad = (n, w) => String(n).padStart(w, '0');
+
+// Chapters may be fractional (12, 12.1, 12.5 …); do the math in tenths to avoid float drift.
+const toTenths = ch => Math.round(ch * 10);
+function chStr(ch, w) {
+  const t = toTenths(ch), int = zpad(Math.floor(t / 10), w);
+  return t % 10 ? `${int}.${t % 10}` : int;
+}
+
+// n = 1-based page index within the chapter.
+// v = {hp, sep, pp, ext, first} variant (default: current); first = number of the first page.
+// v.custom = a URL set by hand for one chapter ({t, tpl with {p}, pad, first}); used only
+// for that chapter, so it never leaks into probes of its neighbours.
+function pageUrl(src, ch, n, v = src) {
+  const c = v.custom;
+  if (c && c.t === toTenths(ch)) return c.tpl.replace('{p}', zpad(c.first + n - 1, c.pad));
+  return src.tpl.replace('{hp}', v.hp ?? '').replace('{sep}', v.sep ?? '').replace('{ch}', chStr(ch, src.chPad))
+    .replace('{pp}', v.pp ?? '').replace('{p}', zpad((v.first ?? src.first) + n - 1, src.pad))
+    .replace('{ext}', v.ext ?? '');
+}
+
+// Alternatives to try, current one first.
+const sepsOf = src => (src.sep === '_' || src.sep === '-') ? [src.sep, src.sep === '_' ? '-' : '_'] : [src.sep];
+const prefixesOf = src => src.tpl.includes('{pp}') ? [src.pp ?? '', ...PREFIXES.filter(p => p !== (src.pp ?? ''))] : [src.pp];
+const extsOf = ext => ext ? [ext, ...EXTS.filter(e => e !== ext.toLowerCase())] : [ext];
+// image_1 … vs page_0 …: pages may be numbered from 0 or from 1.
+const firstsOf = src => src.aid ? [src.first] : [src.first, src.first ? 0 : 1];
+const hostsOf = src => src.tpl.includes('{hp}') ? [src.hp ?? '', ...HOST_PREFIXES.filter(h => h !== (src.hp ?? ''))] : [src.hp];
+// On another host, at most one other part changes too (keeps a full sweep near 60 requests
+// rather than 140).
+const variantsOf = src => hostsOf(src).flatMap(hp => sepsOf(src).flatMap(sep => prefixesOf(src).flatMap(pp =>
+  extsOf(src.ext).flatMap(ext => firstsOf(src).map(first => ({ hp, sep, pp, ext, first }))))))
+  .filter(v => (v.hp ?? '') === (src.hp ?? '') || diffOf({ ...v, hp: src.hp }, src) <= 1);
+
+// How many parts differ from the current variant. The file-name prefix and the first page
+// number change together (page_0 → image_1), so they count as one part.
+const VARIANT_PARTS = [['hp'], ['sep'], ['pp', 'first'], ['ext']];
+const diffOf = (v, src) => VARIANT_PARTS.filter(ks => ks.some(k => String(v[k] ?? '') !== String(src[k] ?? ''))).length;
+
+function srcLabel(src) {
+  return src.aid ? `${HOST}/?aid=${src.aid}&iid=${src.ch}` : pageUrl(src, src.ch, 1);
+}
+
+// v: {sep, pp, ext} to start with. verified: v is known to have a page 1 (don't re-probe).
+function loadChapter(ch, startPos = 0, anchor = -1, v = state.src, verified = false) {
+  const token = ++state.loadToken;
+  started = true;
+  // A chapter with its own URL (added by hand) stands alone: the series keeps its format.
+  const custom = v.custom?.t === toTenths(ch) ? v.custom : undefined;
+  if (custom) v = state.src;
+  const src = state.src = { ...state.src, ch, hp: v.hp, sep: v.sep, pp: v.pp, ext: v.ext, first: v.first ?? state.src.first, custom };
+  Object.assign(state, { pages: [], total: null, pos: startPos, anchor, waitFwd: false });
+  store.set('src', src); store.set('anchor', anchor);
+  $('src').value = srcLabel(src);
+  stage.innerHTML = '';
+  msg.textContent = '';
+  state.searching = null; // an in-flight search sees the new token and bails
+  state.loading = `読み込み中… (第${ch}話)`;
+  updateBusy();
+
+  let next = 1, firstMissing = Infinity, inflight = 0;
+  const launch = () => {
+    while (inflight < PROBE_CONCURRENCY && next < firstMissing) {
+      const n = next++;
+      if (state.pages[n - 1]) continue; // already loaded before a false end was undone
+      inflight++;
+      const img = new Image();
+      const exts = extsOf(src.ext); // src.ext follows whatever the last page turned out to use
+      let ei = 0, retried = false;
+      const url = () => pageUrl(src, ch, n, { ...src, ext: exts[ei] });
+      img.onload = () => {
+        if (token !== state.loadToken) return;
+        inflight--;
+        state.pages[n - 1] = { img, w: img.naturalWidth, h: img.naturalHeight };
+        if (exts[ei] !== src.ext) { src.ext = exts[ei]; store.set('src', src); }
+        // A fallback proved this wasn't the end after all: resume past it.
+        if (firstMissing === n) { firstMissing = Infinity; next = n + 1; }
+        render();
+        launch();
+      };
+      img.onerror = () => {
+        if (token !== state.loadToken) return;
+        // Pages past a (possibly tentative) end just drop out.
+        if (n <= firstMissing) {
+          firstMissing = n; // tentative; stops launching further pages meanwhile
+          // The extension can change mid-series (jpeg → webp): try the others.
+          if (ei + 1 < exts.length) { ei++; img.src = url(); return; }
+          // Then one delayed, cache-busted retry, so a host that is briefly refusing
+          // requests doesn't cut the chapter short (or make it look empty).
+          if (!retried) {
+            retried = true; ei = 0;
+            setTimeout(() => { if (token === state.loadToken) img.src = bust(url()); }, PAGE_RETRY_DELAY);
+            return;
+          }
+        }
+        inflight--;
+        if (inflight === 0) finish();
+        else launch();
+      };
+      img.src = url();
+    }
+    if (inflight === 0) finish();
+  };
+  const finish = () => {
+    if (state.total !== null) return;
+    state.total = firstMissing - 1;
+    if (state.total === 0) {
+      // e.g. typed "80" while on chapter_79/0.webp but this one is chapter-80/page_0.webp
+      const fail = () => {
+        state.loading = null; updateBusy();
+        msg.textContent = `第${ch}話の画像が見つかりません\n${pageUrl(src, ch, 1)}`;
+        pageno.textContent = '';
+      };
+      // A hand-set URL is used as given; no guessing other formats from it.
+      if (verified || src.custom) return fail();
+      return exists(src, toTenths(ch)).then(hit => {
+        if (token !== state.loadToken) return;
+        if (hit) loadChapter(ch, startPos, anchor, hit, true); else fail();
+      });
+    }
+    state.pos = Math.min(state.pos, state.total - 1);
+    render();
+  };
+  launch();
+}
+
+// ---- layout --------------------------------------------------------------
+
+// Contiguous loaded prefix; layout only uses pages whose predecessors are known.
+function loadedCount() {
+  let i = 0;
+  while (state.pages[i]) i++;
+  return i;
+}
+
+const isWide = p => p.w > p.h;
+
+// Split pages into views: [[0], [1,2], [3,4], ...]
+function buildViews(count) {
+  const views = [];
+  let i = 0;
+  while (i < count) {
+    const p = state.pages[i];
+    const single = !state.spread || isWide(p) || (state.cover && i === 0) || i + 1 === state.anchor;
+    const q = state.pages[i + 1];
+    if (single || i + 1 >= count || isWide(q)) {
+      // At the tail of a still-loading chapter, don't commit a lone page yet.
+      if (!single && i + 1 >= count && state.total === null) break;
+      views.push([i]); i += 1;
+    } else {
+      views.push([i, i + 1]); i += 2;
+    }
+  }
+  return views;
+}
+
+function currentViewIndex(views) {
+  const idx = views.findIndex(v => v.includes(state.pos));
+  return idx;
+}
+
+function render() {
+  const count = loadedCount();
+  const views = buildViews(count);
+  let vi = currentViewIndex(views);
+
+  stage.classList.toggle('rtl', state.rtl);
+  $('dirBtn').textContent = state.rtl ? '右開き' : '左開き';
+  $('spreadBtn').classList.toggle('on', state.spread);
+  $('coverBtn').classList.toggle('on', state.cover);
+  $('coverBtn').disabled = !state.spread;
+  stage.classList.toggle('fit', state.fit);
+  $('fitBtn').classList.toggle('on', state.fit);
+  $('skipFracsBtn').classList.toggle('on', state.skipFracs);
+
+  if (vi >= 0 && state.waitFwd) {
+    if (vi + 1 < views.length) { vi++; state.waitFwd = false; }
+    else if (state.total !== null) state.waitFwd = false; // chapter ended while waiting
+  }
+  const waiting = vi < 0 || state.waitFwd;
+  state.loading = waiting && state.total !== 0 ? `読み込み中… (第${state.src.ch}話 ${count}ページ)` : null;
+  updateBusy();
+  if (vi < 0) return;
+
+  const view = views[vi];
+  state.pos = view[0];
+  store.set('pos', state.pos);
+
+  stage.classList.toggle('two', view.length === 2);
+  stage.classList.toggle('one', view.length === 1);
+  stage.replaceChildren(...view.map(i => state.pages[i].img));
+
+  const label = view.map(i => i + 1).join('-');
+  const total = state.total === null ? `${count}+` : state.total;
+  pageno.textContent = `第${state.src.ch}話　${label} / ${total}`;
+
+  recordHistory();
+}
+
+// ---- history -------------------------------------------------------------
+
+// Entries: {src, pos, anchor, name, at}; src carries the chapter (src.ch) and its variant.
+const HISTORY_MAX = 100;
+const marks = { history: store.get('history', []) };
+
+// Newest HISTORY_MAX entries, plus the newest entry of every series beyond them: the home
+// screen is built from the history, so trimming must never drop a series.
+function trimHistory(list) {
+  const sorted = [...list].sort((a, b) => b.at - a.at);
+  const keep = sorted.slice(0, HISTORY_MAX);
+  const seen = new Set(keep.map(e => seriesKey(e.src)));
+  for (const e of sorted.slice(HISTORY_MAX)) {
+    const key = seriesKey(e.src);
+    if (!seen.has(key)) { seen.add(key); keep.push(e); }
+  }
+  return keep;
+}
+
+// example.com and 2.example.com are the same series.
+const seriesKey = src => src.aid ? `fc2:${src.aid}` : splitHostPrefix(src.tpl)[0];
+// Title guessed from the URL: ".../one-piece/chapter_12/…" or ".../one-piece-chapter-12/…".
+function seriesName(src) {
+  if (src.aid) return `FC2 アルバム ${src.aid}`;
+  const segs = src.tpl.replace('{hp}', '').split('?')[0].split('/');
+  const i = segs.findIndex(s => s.includes('{ch}'));
+  let name = (segs[i] || '').replace(/[-_ ]*chapter.*$/i, '') || segs[i - 1] || '';
+  try { name = decodeURIComponent(name); } catch {}
+  return name.replace(/[-_+]+/g, ' ').trim() || segs[2] || '?';
+}
+
+// Names the user gave a series (✎ on its home card): seriesKey → name.
+const seriesTitles = store.get('seriesTitles', {});
+// What a series is called: the user's name for it, else `fallback` (the URL's guess).
+const seriesTitle = (key, fallback) => seriesTitles[key] || fallback;
+
+// Bookmarks were dropped in favour of the series list: a bookmark's name becomes its series'
+// name (unless one was set), and a series known only from a bookmark keeps its place as
+// history. The old list is kept as mv.bookmarksBackup.
+// Runs on every load from the backup, so a series lost to the old history trimming comes
+// back; deleting a series also removes it from the backup.
+// A series with no name of its own gets its newest bookmark's name; one whose name was
+// cleared with ✎ (stored as '') is left alone.
+(function foldBookmarks() {
+  const old = store.get('bookmarks', null);
+  if (old?.length) {
+    store.set('bookmarksBackup', old);
+    store.set('bookmarks', []);
+  }
+  let added = false, named = false;
+  for (const raw of [...store.get('bookmarksBackup', [])].sort((x, y) => y.at - x.at)) {
+    // Old saves may predate the {sep}/{pp}/{ext}/{hp} template parts: same key as today's.
+    const b = { ...raw, src: upgradeSrc({ ...raw.src }) }, key = seriesKey(b.src);
+    if (seriesTitles[key] === undefined && b.name && b.name !== seriesName(b.src)) {
+      seriesTitles[key] = b.name;
+      named = true;
+    }
+    if (marks.history.some(h => seriesKey(h.src) === key)) continue;
+    marks.history.push({ ...b, name: seriesName(b.src) });
+    added = true;
+  }
+  if (named) store.set('seriesTitles', seriesTitles);
+  if (added) {
+    marks.history = trimHistory(marks.history);
+    store.set('history', marks.history);
+  }
+})();
+
+function renameSeries(key, current) {
+  const name = prompt('作品の名前（空にするとURLから付けた名前に戻ります）', current);
+  if (name === null) return;
+  // '' (not deleted) so a bookmark's old name isn't put back on the next load.
+  seriesTitles[key] = name.trim();
+  store.set('seriesTitles', seriesTitles);
+  renderHome();
+  if (listsOpen()) renderLists();
+}
+const samePlace = (e, src, pos) => seriesKey(e.src) === seriesKey(src) && e.src.ch === src.ch && e.pos === pos;
+const isHere = e => samePlace(e, state.src, state.pos);
+const entryHere = name => ({ src: { ...state.src }, pos: state.pos, anchor: state.anchor, name, at: Date.now() });
+
+// One entry per chapter, most recent first; updated as pages turn.
+function recordHistory() {
+  const top = marks.history[0];
+  if (top && isHere(top) && top.anchor === state.anchor) return;
+  const key = seriesKey(state.src);
+  marks.history = trimHistory([entryHere(seriesName(state.src)),
+    ...marks.history.filter(e => !(seriesKey(e.src) === key && e.src.ch === state.src.ch))]);
+  store.set('history', marks.history);
+  noteSeriesAdded(state.src);
+  clearUpdate(state.src);
+  if (listsOpen() && listTab === 'hist') renderLists();
+}
+
+function openEntry(e) {
+  closeLists();
+  home.classList.remove('on');
+  state.src = upgradeSrc({ ...e.src });
+  loadChapter(e.src.ch, e.pos, e.anchor ?? -1);
+}
+
+const lists = $('lists');
+let listTab = store.get('listTab', 'hist') === 'ch' ? 'ch' : 'hist';
+const listsOpen = () => lists.classList.contains('on');
+function openLists(tab = listTab) {
+  listTab = tab; store.set('listTab', tab);
+  lists.classList.add('on');
+  renderLists();
+  if (tab === 'ch') $('listItems').querySelector('.cur')?.scrollIntoView({ block: 'center' });
+  const cache = chapterCache[seriesKey(state.src)];
+  if (tab === 'ch' && (!cache || cache.partial) && chScan?.key !== seriesKey(state.src)) scanChapters();
+}
+function closeLists() { lists.classList.remove('on'); }
+
+const fmtTime = t => new Date(t).toLocaleString('ja-JP',
+  { year: 'numeric', month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+const el = (tag, cls, text) => { const n = document.createElement(tag); if (cls) n.className = cls; if (text != null) n.textContent = text; return n; };
+const btn = (text, title, fn) => { const b = el('button', null, text); b.title = title; b.onclick = fn; return b; };
+
+function renderLists() {
+  for (const [id, tab] of [['tabHist', 'hist'], ['tabCh', 'ch']]) $(id).classList.toggle('on', listTab === tab);
+  $('clearHist').style.display = listTab === 'hist' && marks.history.length ? '' : 'none';
+  if (listTab === 'ch') return renderChapterTab();
+  const items = marks.history;
+  const save = () => { store.set('history', items); renderLists(); render(); };
+  if (!items.length) return $('listItems').replaceChildren(el('li', 'empty', '履歴はまだありません'));
+  $('listItems').replaceChildren(...items.map((e, i) => {
+    const li = el('li', isHere(e) ? 'here' : null);
+    // Thumbnail straight from the site (nothing stored); a blank tile if it won't load.
+    const thumb = el('img', 'thumb');
+    thumb.loading = 'lazy'; thumb.alt = '';
+    thumb.onerror = () => { const blank = el('div', 'thumb'); blank.onclick = thumb.onclick; thumb.replaceWith(blank); };
+    thumb.src = pageUrl(e.src, e.src.ch, e.pos + 1);
+    thumb.onclick = () => openEntry(e);
+    li.append(thumb);
+    const main = el('div', 'main');
+    main.title = srcLabel(e.src);
+    const title = el('div', 't', seriesTitle(seriesKey(e.src), e.name));
+    const fresh = updates[seriesKey(e.src)]?.ts;
+    if (fresh?.length) {
+      const tag = el('span', 'newtag', `新着 ${chList(fresh)}`);
+      tag.title = `新着の話を開く\n${chList(fresh, true)}`;
+      tag.onclick = ev => { ev.stopPropagation(); openNew(e); };
+      title.append(tag);
+    }
+    main.append(title, el('div', 's', `第${e.src.ch}話　${e.pos + 1}ページ　·　${fmtTime(e.at)}`));
+    main.onclick = () => openEntry(e);
+    li.append(main);
+    if (fresh?.length) li.append(btn('✓', 'この作品の新着を既読にする', () => markRead(seriesKey(e.src))));
+    li.append(btn('✕', '削除', () => {
+      items.splice(i, 1);
+      // Its series' last entry gone: don't let the bookmark backup bring it back.
+      const key = seriesKey(e.src);
+      if (!items.some(x => seriesKey(x.src) === key))
+        store.set('bookmarksBackup', store.get('bookmarksBackup', []).filter(b => seriesKey(b.src) !== key));
+      save();
+    }));
+    return li;
+  }));
+}
+
+// ---- chapter list --------------------------------------------------------
+
+// There is no index to read (other sites can't be fetched from here), so chapters are found
+// by probing page 1 of each whole number from 0 up, a window at a time; the scan ends once
+// CH_SCAN_TAIL numbers in a row past the current chapter are missing (decimals included).
+// Decimals of missing numbers are always checked; those after existing chapters are
+// optional (nine probes per chapter). Results are kept per series.
+const CH_SCAN_WINDOW = 6;
+const CH_SCAN_TAIL = 11;
+const chapterCache = store.get('chapters', {}); // seriesKey → {list: [{t, sep, pp, ext, first}], at}
+let chScan = null;                               // {key, at, fracs} while scanning
+let chFracs = store.get('chFracs', false);
+
+const variantOf = h => ({ hp: h.hp, sep: h.sep, pp: h.pp, ext: h.ext, first: h.first });
+
+// Chapters t+.from … t+.9 (t in tenths) that exist, in src's own format only.
+async function wholeFracs(src, t, from = 1, fresh = false) {
+  const ts = Array.from({ length: 10 - from }, (_, j) => t + from + j);
+  const ok = await Promise.all(ts.map(x => fresh
+    ? probe(bust(pageUrl(src, x / 10, 1)), PROBE_TIMEOUT * 2).then(r => r === 'ok')
+    : probeOk(pageUrl(src, x / 10, 1))));
+  return ts.filter((_, j) => ok[j]).map(x => ({ t: x, ...variantOf(src) }));
+}
+
+// Where the numbering skips, the format may change in more than one way at once
+// (55.2/page_0.jpg → 56.1/image_1.webp), so a miss right after a hit is re-checked in
+// every other format: whole number t, and t.1 (then t.2 … in whatever t.1 turned out to use).
+const CH_WIDE_MISSES = 1; // misses in a row that get this (each costs ~130 requests)
+async function wideCheck(src, t) {
+  const [whole, frac] = await Promise.all([exists(src, t, { minDiff: 2 }), exists(src, t + 1, { minDiff: 1 })]);
+  if (whole) return [whole];
+  if (!frac) return [];
+  return [frac, ...await wholeFracs({ ...src, ...variantOf(frac) }, t, 2)];
+}
+
+// Scanned chapters plus any read ones (e.g. decimals the scan skipped).
+function knownChapters(src) {
+  const key = seriesKey(src), map = new Map();
+  for (const h of chapterCache[key]?.list || []) map.set(h.t, h);
+  for (const e of marks.history) {
+    const t = toTenths(e.src.ch);
+    if (seriesKey(e.src) === key && !map.has(t))
+      map.set(t, e.src.custom ? { t, ...variantOf(e.src), manual: true, custom: e.src.custom } : { t, ...variantOf(e.src) });
+  }
+  return [...map.values()].sort((a, b) => a.t - b.t);
+}
+
+// The series' own chapters: what the URL format is worked out from (hand-added ones,
+// with URLs of their own, never are).
+const autoChapters = src => knownChapters(src).filter(h => !h.manual && !h.custom);
+
+// merge: add to the saved list instead of replacing its whole numbers. A list started by
+// a merge (the new-chapter check) is marked partial, so the chapter tab still scans it.
+function saveChapters(key, list, merge = false) {
+  const prev = chapterCache[key];
+  // A whole-number rescan keeps decimals found earlier and chapters added by hand. Hand-added
+  // ones win over a scan's find for the same number; a new hand-added one replaces anything.
+  const old = (prev?.list || []).filter(h => merge || h.t % 10 || h.manual);
+  const handNew = list.filter(h => h.manual);
+  const map = new Map([...old.filter(h => !h.manual), ...list.filter(h => !h.manual),
+    ...old.filter(h => h.manual), ...handNew].map(h => [h.t, h]));
+  chapterCache[key] = { list: [...map.values()].sort((a, b) => a.t - b.t), at: Date.now(),
+    partial: merge && (!prev || prev.partial) };
+  store.set('chapters', chapterCache);
+}
+
+// Walks from whole number `start` (tenths) one way, following the format as it changes
+// along the series (page_0.jpg → image_1.webp …). Down goes all the way to 0; up stops after
+// `tail` misses in a row. wide: re-check the first miss after a hit in every format.
+// onWindow gets the chapters found so far after each window. Resolves to the chapters
+// found, or null once alive() turns false.
+// fresh: cache-busted requests (a page asked for before it was out can stay "missing" in the
+// browser's or the site's cache).
+async function walkChapters(src, start, dir, { tail = CH_SCAN_TAIL, wide = true, fresh = false, alive = () => true, onStep, onWindow } = {}) {
+  const list = [];
+  let base = { ...src }, misses = 0;
+  for (let t = start; dir > 0 ? misses < tail : t >= 0;) {
+    // Going up, no further than the misses still needed to end the walk.
+    const len = dir > 0 ? Math.min(CH_SCAN_WINDOW, tail - misses) : CH_SCAN_WINDOW;
+    const ts = Array.from({ length: len }, (_, j) => t + dir * j * 10).filter(x => x >= 0);
+    const hits = await Promise.all(ts.map(x => exists(base, x, { maxDiff: 1, fresh })));
+    if (!alive()) return null;
+    // A missing whole number may still have decimals (1 → 2.1 → 3): look at its .1 … .9.
+    const fracs = await Promise.all(ts.map((x, j) => hits[j] ? [] : wholeFracs(base, x, 1, fresh)));
+    if (!alive()) return null;
+    let next = t + dir * 10 * len, restart = false;
+    for (const [j, x] of ts.entries()) {
+      let found = hits[j] ? [hits[j]] : fracs[j];
+      if (!found.length && wide && misses < CH_WIDE_MISSES && !src.aid) {
+        found = await wideCheck(base, x);
+        if (!alive()) return null;
+        // The rest of this window was probed in the old format: redo it in the new one.
+        restart = found.length > 0;
+      }
+      onStep?.(x);
+      if (!found.length) { misses++; continue; }
+      list.push(...found); misses = 0;
+      // The next number along is nearest to the last (up) or first (down) one found.
+      base = { ...base, ...variantOf(dir > 0 ? found[found.length - 1] : found[0]) };
+      if (restart) { next = x + dir * 10; break; }
+    }
+    onWindow?.(list);
+    t = next;
+  }
+  return list;
+}
+
+async function scanChapters() {
+  // Probes use the series' format only, never a hand-set URL of the chapter being read.
+  const src = { ...state.src, custom: undefined }, key = seriesKey(src), cur = toTenths(src.ch);
+  const me = chScan = { key, at: 0, fracs: false };
+  const alive = () => chScan === me && seriesKey(state.src) === key;
+  const refresh = () => { if (listsOpen() && listTab === 'ch') renderLists(); };
+  // The scan only looks at decimals where the whole number is missing; keep the one we're on.
+  const list = cur % 10 && state.total > 0 && !state.src.custom ? [{ t: cur, ...variantOf(src) }] : [];
+  refresh();
+
+  // Outward from the current chapter (whose format is known to work), down then up.
+  const w = Math.floor(cur / 10) * 10;
+  const opts = { alive, onStep: x => { me.at = x; }, onWindow: found => { saveChapters(key, [...list, ...found]); refresh(); } };
+  try {
+    for (const [start, dir] of [[w - 10, -1], [w, 1]]) {
+      const found = await walkChapters(src, start, dir, opts);
+      if (!found) return;
+      list.push(...found);
+    }
+    if (chFracs && !src.aid) {
+      me.fracs = true;
+      const wholes = list.filter(h => h.t % 10 === 0);
+      for (let i = 0; i < wholes.length; i += 3) {
+        const res = await Promise.all(wholes.slice(i, i + 3).map(h => wholeFracs({ ...src, ...variantOf(h) }, h.t)));
+        if (!alive()) return;
+        list.push(...res.flat());
+        me.at = wholes[Math.min(i + 2, wholes.length - 1)].t;
+        saveChapters(key, list.sort((a, b) => a.t - b.t));
+        refresh();
+      }
+    }
+  } finally {
+    if (chScan === me) { chScan = null; refresh(); }
+  }
+}
+
+function renderChapterTab() {
+  const src = state.src, key = seriesKey(src), list = knownChapters(src);
+  const scanning = chScan?.key === key, cache = chapterCache[key];
+  const read = new Set(marks.history.filter(e => seriesKey(e.src) === key).map(e => toTenths(e.src.ch)));
+  const fresh = new Set(updates[key]?.ts || []);
+
+  const tools = el('li', 'tools');
+  tools.append(el('div', 'grow s', scanning
+    ? `${chScan.fracs ? '小数話を' : ''}探しています… 第${chStr(chScan.at / 10)}話を確認中（${list.length}話）`
+    : cache && !cache.partial ? `${list.length}話　·　${fmtTime(cache.at)} に取得` : `${list.length}話（履歴・新着から）`));
+  if (scanning) {
+    tools.append(btn('中止', '探すのをやめる', () => { chScan = null; renderLists(); }));
+  } else {
+    const box = el('input'); box.type = 'checkbox'; box.checked = chFracs;
+    box.onchange = () => { chFracs = box.checked; store.set('chFracs', chFracs); };
+    const label = el('label', 's'); label.title = '12.5話のような話も探す（時間がかかります）';
+    label.append(box, '小数話も');
+    if (!src.aid) tools.append(label);
+    if (fresh.size) tools.append(btn('既読にする', 'この作品の新着を既読にする', () => markRead(key)));
+    tools.append(btn('＋ 追加', '見つからなかった話を、番号かその話の画像URLで追加する', addChapters));
+    tools.append(btn(cache && !cache.partial ? '再取得' : '取得', 'サイトに問い合わせて話を探す', scanChapters));
+  }
+
+  const grid = el('li', 'grid');
+  grid.append(...list.map(h => {
+    const b = btn(chStr(h.t / 10), `第${chStr(h.t / 10)}話${read.has(h.t) ? '（既読）' : ''}`, () => {
+      closeLists();
+      loadChapter(h.t / 10, 0, -1, h);
+    });
+    if (h.t === toTenths(src.ch)) b.classList.add('cur');
+    else if (fresh.has(h.t)) b.classList.add('new');
+    else if (read.has(h.t)) b.classList.add('read');
+    if (h.manual) b.classList.add('manual');
+    b.title += h.custom ? '（URLを手動で指定）' : h.manual ? '（手動で追加）' : '';
+    b.title += '\n右クリックでURLの確認・変更';
+    b.oncontextmenu = ev => { ev.preventDefault(); editChapterUrl(key, h); };
+    return b;
+  }));
+  $('listItems').replaceChildren(tools, ...(list.length ? [grid] : scanning ? [] : [el('li', 'empty', '見つかった話はありません')]));
+}
+
+// Chapters the scan missed, added by hand: "12", "12.5", "20-23", "5, 7", or the URL of one
+// of the chapter's images (for a chapter in an unusual format). Numbers are looked up in
+// every format; ones that can't be found are added in the current format if confirmed.
+// Kept across rescans (manual: true).
+const MAX_MANUAL = 50;
+const NUM_RE = /^\d+(\.\d)?$/;
+
+// A hand-set URL for chapter t: the image URL of its first page, whose last number is the
+// page number (…/001.jpg, …/p_1.webp?x=y). null if there's no number to count up from.
+function customFromUrl(url, t) {
+  const m = url.match(/^(.*\D)(\d+)(\.(?:jpe?g|png|webp|gif|avif)(?:\?.*)?)$/i);
+  if (!m || !/^https?:\/\//i.test(url)) return null;
+  return { t, tpl: m[1] + '{p}' + m[3], pad: padOf(m[2]), first: +m[2] === 0 ? 0 : 1 };
+}
+const BAD_URL = '1ページ目の画像のURL（…/001.jpg のように、ページ番号で終わるもの）を入れてください。';
+
+async function addChapters() {
+  const src = state.src, key = seriesKey(src);
+  const input = prompt('追加する話の番号（例：12　12.5　20-23　5, 7）\n'
+    + 'か、その話の1ページ目の画像URL（「12 https://…」のように番号と並べると、その話をこのURLで読みます）', '')?.trim();
+  if (!input) return;
+  // Every hand-added chapter stands alone: it's read from its own fixed URL, and nothing
+  // about the series' format is taken from it (see autoChapters).
+  const entry = (t, url) => ({ t, ...variantOf(src), manual: true, custom: customFromUrl(url, t) });
+  const add = list => {
+    saveChapters(key, list, true);
+    flash(`${list.length}話を追加しました`);
+    renderLists();
+  };
+
+  // "12 https://…": chapter 12 is read from that URL, whatever its shape.
+  const pair = input.match(/^(\d+(?:\.\d)?)\s+(https?:\/\/\S+)$/i);
+  if (pair) {
+    const h = entry(toTenths(+pair[1]), pair[2]);
+    return h.custom ? add([h]) : alert(BAD_URL);
+  }
+  if (/^https?:\/\//i.test(input)) {
+    // The chapter number comes from the URL when it's this series' shape; otherwise ask.
+    const s = parseInput(input);
+    let t = typeof s !== 'string' && seriesKey(s) === key ? toTenths(s.ch) : null;
+    if (t === null) {
+      const n = prompt('この画像は何話ですか？（例：12　12.5）', typeof s === 'string' ? '' : chStr(s.ch))?.trim();
+      if (!n) return;
+      if (!NUM_RE.test(n)) return alert(`「${n}」は話の番号として読めません。`);
+      t = toTenths(+n);
+    }
+    const h = entry(t, input);
+    return h.custom ? add([h]) : alert(BAD_URL);
+  }
+
+  const ts = [];
+  for (const tok of input.split(/[\s,、，]+/).filter(Boolean)) {
+    const range = tok.match(/^(\d+)[-~〜～](\d+)$/);
+    if (range) {
+      const [a, b] = [+range[1], +range[2]].sort((x, y) => x - y);
+      for (let n = a; n <= b; n++) ts.push(n * 10);
+    } else if (NUM_RE.test(tok)) ts.push(toTenths(+tok));
+    else return alert(`「${tok}」は話の番号として読めません。`);
+  }
+  const want = [...new Set(ts)];
+  if (want.length > MAX_MANUAL) return alert(`一度に追加できるのは ${MAX_MANUAL} 話までです。`);
+
+  flash('サイトで確認しています…');
+  const found = [], missing = [];
+  for (let i = 0; i < want.length; i += 4) {
+    const hits = await Promise.all(want.slice(i, i + 4).map(t => exists(src, t)));
+    if (seriesKey(state.src) !== key) return; // switched series meanwhile
+    // Found in some format: fix the chapter to that exact URL.
+    hits.forEach((h, j) => h ? found.push(entry(h.t, pageUrl(src, h.t / 10, 1, h))) : missing.push(want[i + j]));
+  }
+  if (missing.length && confirm(`${chList(missing)} は画像が見つかりませんでした。\nそれでも話一覧に追加しますか？`)) {
+    found.push(...missing.map(t => entry(t, pageUrl({ ...src, custom: undefined }, t / 10, 1))));
+  }
+  if (found.length) add(found);
+  else flash('追加しませんでした');
+}
+
+// Right-click on a chapter: show the URL it's read from and let it be changed. A changed
+// URL applies to that chapter only; clearing it goes back to the series' own URL (or, for a
+// chapter that only exists because it was added by hand, removes it from the list).
+// h.fromScan marks a chapter of the series whose URL was overridden: clearing gives it back
+// its series URL. A chapter that was only ever added by hand is removed instead.
+function editChapterUrl(key, h) {
+  const n = chStr(h.t / 10);
+  const cur = pageUrl({ ...state.src, ...variantOf(h), custom: h.custom }, h.t / 10, 1);
+  const handOnly = h.manual && !h.fromScan;
+  const input = prompt(`第${n}話の1ページ目の画像URL\n変えると、この話だけこのURLで読みます。`
+    + `空にすると${handOnly ? 'この話を話一覧から消します' : h.custom ? '作品のいつものURLに戻します' : '何もしません'}。`, cur);
+  if (input === null) return;
+  const url = input.trim();
+  let entry = null;
+  if (!url) {
+    if (handOnly) {
+      if (!confirm(`手動で追加した第${n}話を話一覧から消しますか？`)) return;
+    } else if (h.custom) entry = { t: h.t, ...variantOf(h) };
+    else return;
+  } else if (url === cur) return;
+  else {
+    const custom = customFromUrl(url, h.t);
+    if (!custom) return alert(BAD_URL);
+    entry = { t: h.t, ...variantOf(h), manual: true, custom, fromScan: h.fromScan || !h.manual };
+  }
+  // Replace in place (a merge would let the old hand-set entry win over a reverted one).
+  const c = chapterCache[key] ||= { list: [], at: Date.now(), partial: true };
+  c.list = c.list.filter(x => x.t !== h.t);
+  if (entry) c.list = [...c.list, entry].sort((a, b) => a.t - b.t);
+  store.set('chapters', chapterCache);
+  renderLists();
+  if (!entry) return;
+  // Reading that chapter right now: reload it from the new URL.
+  if (seriesKey(state.src) === key && toTenths(state.src.ch) === h.t) loadChapter(h.t / 10, 0, -1, entry);
+}
+
+// ---- new chapters --------------------------------------------------------
+
+// The series in the history are checked for chapters past the latest known
+// one: on load (if the last check is older than UPDATE_EVERY), every UPDATE_EVERY while the
+// page is open, and on demand. Only UPDATE_TAIL numbers past the end are probed (one part
+// off the current format, plus their decimals), about 40 requests per series.
+const UPDATE_EVERY = 30 * 60 * 1000;
+const UPDATE_TAIL = 2;
+const updates = store.get('updates', {}); // seriesKey → {name, ts: [t…] not yet read, at}
+let updCheck = null;                       // {done, total} while checking
+
+// One entry per series.
+function watchedSeries() {
+  const map = new Map();
+  for (const e of marks.history) {
+    const key = seriesKey(e.src);
+    if (!map.has(key)) map.set(key, { key, name: seriesTitle(key, e.name), src: upgradeSrc({ ...e.src }) });
+  }
+  return [...map.values()];
+}
+
+async function checkUpdates(manual = false) {
+  if (updCheck) return;
+  const series = watchedSeries();
+  const me = updCheck = { done: 0, total: series.length };
+  const alive = () => updCheck === me;
+  const found = [];
+  refreshUpdates();
+  try {
+    for (const s of series) {
+      // Past the last chapter of any kind, in the format of the last one the series itself has.
+      const known = knownChapters(s.src), last = known[known.length - 1];
+      const auto = autoChapters(s.src), fmt = auto[auto.length - 1];
+      if (last && fmt) {
+        // No saved chapter list (never scanned, or lost): the end is only where we last read,
+        // so walk on as far as the chapter tab's scan would (gaps, format changes) instead of
+        // the quick look just past a known end.
+        const full = !chapterCache[s.key]?.list.some(h => !h.manual && !h.custom);
+        // The numbers just past the end are asked for every check until they come out, so
+        // they're always fetched fresh: a cached "missing" would hide them for good.
+        let fresh;
+        try {
+          fresh = await walkChapters({ ...s.src, ...variantOf(fmt), custom: undefined }, Math.floor(last.t / 10) * 10 + 10, 1,
+            full ? { alive, fresh: true } : { tail: UPDATE_TAIL, wide: false, fresh: true, alive });
+        } catch (err) {
+          // One series failing must not stop the check of the ones after it.
+          console.warn('新着チェック失敗', s.name, err);
+          fresh = [];
+        }
+        if (!fresh) return;
+        if (fresh.length) {
+          saveChapters(s.key, fresh, true);
+          const u = updates[s.key] ||= { ts: [] };
+          Object.assign(u, { name: s.name, at: Date.now(), ts: [...new Set([...u.ts, ...fresh.map(h => h.t)])].sort((a, b) => a - b) });
+          store.set('updates', updates);
+          found.push({ name: s.name, ts: fresh.map(h => h.t) });
+        }
+      }
+      me.done++;
+      refreshUpdates();
+    }
+    store.set('updatesAt', Date.now());
+    if (found.length) notifyUpdates(found);
+    else if (manual) flash('新着はありません');
+  } finally {
+    if (alive()) { updCheck = null; refreshUpdates(); }
+  }
+}
+
+// 多いときは「第1〜50話（50話）」のように最初と最後だけにする
+const chList = (ts, full) => !full && ts.length > 3
+  ? `第${chStr(Math.min(...ts) / 10)}〜${chStr(Math.max(...ts) / 10)}話（${ts.length}話）`
+  : ts.map(t => `第${chStr(t / 10)}話`).join('・');
+function notifyUpdates(found) {
+  const lines = found.map(f => `${f.name}　${chList(f.ts)}`);
+  const toast = $('toast');
+  toast.textContent = `新着があります\n${lines.slice(0, 5).join('\n')}${lines.length > 5 ? `\nほか${lines.length - 5}作品` : ''}`;
+  toast.classList.add('on');
+  clearTimeout(toast.timer);
+  toast.timer = setTimeout(() => toast.classList.remove('on'), 20000);
+  // Also a desktop notification, if the browser allows one for this page.
+  try {
+    if (window.Notification?.permission === 'granted') new Notification('新着があります', { body: lines.join('\n') });
+  } catch {}
+}
+$('toast').onclick = () => { $('toast').classList.remove('on'); openHome(); };
+
+// Reading a new chapter clears its mark.
+function clearUpdate(src) {
+  const key = seriesKey(src), u = updates[key], t = toTenths(src.ch);
+  if (!u?.ts.includes(t)) return;
+  u.ts = u.ts.filter(x => x !== t);
+  if (!u.ts.length) delete updates[key];
+  store.set('updates', updates);
+  refreshUpdates();
+}
+
+// Clear the marks without reading (one series, or all of them).
+function markRead(key) {
+  if (key) delete updates[key];
+  else for (const k in updates) delete updates[k];
+  store.set('updates', updates);
+  refreshUpdates();
+}
+
+function openNew(e) {
+  const key = seriesKey(e.src), t = updates[key]?.ts[0];
+  if (t == null) return;
+  closeLists();
+  home.classList.remove('on');
+  state.src = upgradeSrc({ ...e.src });
+  loadChapter(t / 10, 0, -1, chapterCache[key]?.list.find(h => h.t === t) || state.src);
+}
+
+function refreshUpdates() {
+  const n = Object.values(updates).reduce((s, u) => s + u.ts.length, 0);
+  $('listBtn').textContent = n ? `一覧 ●${n}` : '一覧';
+  $('listBtn').classList.toggle('new', n > 0);
+  const here = updates[seriesKey(state.src)]?.ts.length || 0;
+  $('chListBtn').textContent = here ? `話一覧 ●${here}` : '話一覧';
+  $('chListBtn').classList.toggle('new', here > 0);
+  for (const id of ['readAll', 'homeReadAll']) $(id).style.display = n ? '' : 'none';
+  const at = store.get('updatesAt', 0);
+  for (const id of ['checkUpd', 'homeCheck']) {
+    const b = $(id);
+    b.textContent = updCheck ? `確認中 ${updCheck.done}/${updCheck.total}` : '新着チェック';
+    b.disabled = !!updCheck;
+    b.title = `読んだ作品に新しい話が出ていないか確認${at ? `（前回 ${fmtTime(at)}）` : ''}`;
+  }
+  if (listsOpen()) renderLists();
+  renderHome();
+}
+
+$('readAll').onclick = () => markRead();
+
+// ---- home ----------------------------------------------------------------
+
+// Shown on start when there is something to list; until a chapter is picked nothing loads.
+const home = $('home');
+const homeOpen = () => home.classList.contains('on');
+let started = false; // a chapter has been loaded this session
+
+function openHome() {
+  closeLists();
+  $('homeSrc').value = '';
+  home.classList.add('on');
+  renderHome();
+}
+function closeHome() {
+  home.classList.remove('on');
+  // Back to reading with nothing open yet: pick up where the last session left off.
+  if (!started) loadChapter(state.src.ch, store.get('pos', 0), store.get('anchor', -1));
+}
+
+// When each series was first read (seriesKey → time). Series from before this was kept
+// fall back to their oldest history entry.
+const seriesAdded = store.get('seriesAdded', {});
+function noteSeriesAdded(src) {
+  const key = seriesKey(src);
+  if (seriesAdded[key]) return;
+  seriesAdded[key] = addedOf(key);
+  store.set('seriesAdded', seriesAdded);
+}
+function addedOf(key) {
+  if (seriesAdded[key]) return seriesAdded[key];
+  const ats = marks.history.filter(e => seriesKey(e.src) === key).map(e => e.at);
+  return ats.length ? Math.min(...ats) : Date.now();
+}
+
+const byName = (a, b) => a.localeCompare(b, 'ja', { numeric: true });
+// Series rows: {key, e (latest entry), name, added}.
+const SERIES_SORTS = {
+  new: { label: '新着・最近読んだ順', cmp: (a, b) => (updates[b.key] ? 1 : 0) - (updates[a.key] ? 1 : 0) || b.e.at - a.e.at },
+  recent: { label: '最近読んだ順', cmp: (a, b) => b.e.at - a.e.at },
+  added: { label: '追加日（新しい順）', cmp: (a, b) => b.added - a.added },
+  addedOld: { label: '追加日（古い順）', cmp: (a, b) => a.added - b.added },
+  name: { label: '名前順', cmp: (a, b) => byName(a.name, b.name) },
+};
+let seriesSort = store.get('sortSeries', 'new');
+if (!SERIES_SORTS[seriesSort]) seriesSort = 'new';
+for (const [value, { label }] of Object.entries(SERIES_SORTS))
+  $('sortSeries').append(new Option(label, value, false, value === seriesSort));
+// Cover size on the home screen (minimum card width; the grid fills the row).
+const CARD_SIZES = { s: ['小', 105], m: ['中', 150], l: ['大', 220] };
+let cardSize = CARD_SIZES[store.get('cardSize', 'm')] ? store.get('cardSize', 'm') : 'm';
+function applyCardSize() {
+  home.style.setProperty('--card-w', CARD_SIZES[cardSize][1] + 'px');
+  for (const b of $('cardSizes').children) b.classList.toggle('on', b.dataset.size === cardSize);
+}
+for (const [size, [label]] of Object.entries(CARD_SIZES)) {
+  const b = btn(label, `表紙の大きさ：${label}`, () => { cardSize = size; store.set('cardSize', size); applyCardSize(); });
+  b.dataset.size = size;
+  $('cardSizes').append(b);
+}
+applyCardSize();
+
+$('sortSeries').onchange = () => { seriesSort = $('sortSeries').value; store.set('sortSeries', seriesSort); renderHome(); };
+
+// Cover tile: the page itself from the site, a blank tile if it won't load.
+// A cover chosen for the series (🖼 on its card) wins over the page being read.
+function cover(e, key) {
+  const img = el('img', 'cover');
+  img.loading = 'lazy'; img.alt = '';
+  img.onerror = () => img.replaceWith(el('div', 'cover'));
+  img.src = (key && seriesCovers[key]) || pageUrl(e.src, e.src.ch, e.pos + 1);
+  return img;
+}
+
+function homeCard(e, title, sub, onOpen, acts, key) {
+  const card = el('div', 'card');
+  card.title = srcLabel(e.src);
+  card.onclick = onOpen;
+  card.append(cover(e, key), el('div', 't', title), el('div', 's', sub));
+  const fresh = key && updates[key]?.ts;
+  if (fresh?.length) {
+    card.classList.add('has-new');
+    const tag = el('div', 'newtag', `新着 ${chList(fresh)}`);
+    tag.title = `新着の話を開く\n${chList(fresh, true)}`;
+    tag.onclick = ev => { ev.stopPropagation(); openNew(e); };
+    card.append(tag);
+  }
+  const box = el('div', 'acts');
+  for (const [text, tip, fn] of acts) box.append(btn(text, tip, ev => { ev.stopPropagation(); fn(); }));
+  if (acts.length) card.append(box);
+  return card;
+}
+
+function renderHome() {
+  if (!homeOpen()) return;
+  // One card per series: its latest reading position (history is newest first).
+  const series = new Map();
+  for (const e of marks.history) {
+    const key = seriesKey(e.src);
+    if (!series.has(key)) series.set(key, e);
+  }
+  const list = [...series].map(([key, e]) => ({ key, e, name: seriesTitle(key, e.name), added: addedOf(key) }))
+    .sort(SERIES_SORTS[seriesSort].cmp);
+  $('homeSeries').replaceChildren(...(list.length ? list.map(({ key, e, name }) => {
+    return homeCard(e, name, `第${e.src.ch}話 ${e.pos + 1}ページまで　·　${fmtTime(e.at)}`, () => openEntry(e), [
+      ...(updates[key] ? [['✓', 'この作品の新着を既読にする', () => markRead(key)]] : []),
+      ['✎', '作品の名前を変える', () => renameSeries(key, name)],
+      ['🖼', '作品名から表紙を探す', () => openCoverPicker(key, name)],
+      ['✕', '作品を削除', () => deleteSeries(key, name)],
+    ], key);
+  })
+    : [el('div', 'empty', '読んだ作品はまだありません。上に画像のURLを入れて開いてください。')]));
+}
+
+// Everything kept about a series: its history, chapter list, new-chapter marks, name and
+// added date.
+function deleteSeries(key, name) {
+  const mine = e => seriesKey(e.src) === key;
+  const h = marks.history.filter(mine).length;
+  if (!confirm(`「${name}」を削除しますか？\n履歴 ${h}件・話一覧・新着の印もまとめて消えます。`)) return;
+  marks.history = marks.history.filter(e => !mine(e));
+  store.set('history', marks.history);
+  store.set('bookmarksBackup', store.get('bookmarksBackup', []).filter(e => !mine(e)));
+  for (const [obj, k] of [[chapterCache, 'chapters'], [updates, 'updates'], [seriesTitles, 'seriesTitles'], [seriesAdded, 'seriesAdded'], [seriesCovers, 'seriesCovers']]) {
+    delete obj[key];
+    store.set(k, obj);
+  }
+  refreshUpdates(); // re-renders home and the counts
+  render();
+}
+
+// ---- cover picker ----------------------------------------------------------
+
+// Covers chosen by hand: seriesKey → image URL (shown straight from where it lives).
+const seriesCovers = store.get('seriesCovers', {});
+// Candidates come from AniList, which answers cross-origin requests and knows Japanese
+// titles; anything it lacks can be found with a web image search and pasted as a URL.
+const ANILIST = 'https://graphql.anilist.co';
+const ANILIST_QUERY = `query ($s: String) { Page(perPage: 24) { media(search: $s, type: MANGA) {
+  title { romaji native english } coverImage { extraLarge large } startDate { year } format } } }`;
+const FORMATS = { MANGA: '漫画', NOVEL: '小説', ONE_SHOT: '読み切り' };
+
+const coverPick = $('coverPick');
+const pickerOpen = () => coverPick.classList.contains('on');
+let pickFor = null; // seriesKey being edited
+let pickToken = 0;
+
+function openCoverPicker(key, name) {
+  pickFor = key;
+  $('cpQuery').value = name;
+  coverPick.classList.add('on');
+  searchCovers();
+}
+function closeCoverPicker() { coverPick.classList.remove('on'); pickFor = null; pickToken++; }
+
+function setCover(url) {
+  if (url) seriesCovers[pickFor] = url;
+  else delete seriesCovers[pickFor];
+  store.set('seriesCovers', seriesCovers);
+  closeCoverPicker();
+  renderHome();
+}
+
+async function searchCovers() {
+  const q = $('cpQuery').value.trim();
+  const token = ++pickToken;
+  $('cpGrid').replaceChildren();
+  if (!q) return $('cpStatus').textContent = '作品名を入れてください';
+  $('cpStatus').textContent = '探しています…';
+  let media;
+  try {
+    const r = await fetch(ANILIST, { method: 'POST', headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+      body: JSON.stringify({ query: ANILIST_QUERY, variables: { s: q } }) });
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    media = (await r.json()).data?.Page?.media || [];
+  } catch (err) {
+    if (token === pickToken) $('cpStatus').textContent = `検索できませんでした（${err.message}）。「Googleで画像検索」を使ってください。`;
+    return;
+  }
+  if (token !== pickToken) return;
+  const found = media.filter(m => m.coverImage?.extraLarge || m.coverImage?.large);
+  $('cpStatus').textContent = found.length
+    ? `${found.length}件　クリックで表紙に設定（AniList の画像）`
+    : '見つかりませんでした。作品名を変えて検索するか、「Googleで画像検索」を使ってください。';
+  $('cpGrid').replaceChildren(...found.map(m => {
+    const url = m.coverImage.extraLarge || m.coverImage.large;
+    const c = el('div', 'cand');
+    const img = el('img'); img.loading = 'lazy'; img.alt = ''; img.src = m.coverImage.large || url;
+    const title = m.title.native || m.title.romaji || m.title.english || '';
+    c.title = [m.title.native, m.title.romaji, m.title.english].filter(Boolean).join('\n');
+    c.append(img, el('div', 't', title), el('div', 's', [FORMATS[m.format] || m.format, m.startDate?.year].filter(Boolean).join('・')));
+    c.onclick = () => setCover(url);
+    return c;
+  }));
+}
+
+$('cpSearch').onclick = searchCovers;
+$('cpClose').onclick = closeCoverPicker;
+coverPick.onclick = ev => { if (ev.target === coverPick) closeCoverPicker(); };
+$('cpWeb').onclick = () => window.open('https://www.google.com/search?tbm=isch&q=' + encodeURIComponent($('cpQuery').value.trim() + ' 表紙'), '_blank');
+$('cpUrl').onclick = () => {
+  const url = prompt('表紙にする画像のURL（画像を右クリック →「画像アドレスをコピー」したもの）', seriesCovers[pickFor] || '')?.trim();
+  if (!url) return;
+  if (!/^https?:\/\//i.test(url)) return alert('http:// か https:// で始まる画像のURLを入れてください。');
+  setCover(url);
+};
+$('cpReset').onclick = () => setCover(null);
+
+function openFromHome() {
+  const src = parseInput($('homeSrc').value.trim());
+  if (typeof src === 'string') return alert(src);
+  home.classList.remove('on');
+  state.src = src;
+  loadChapter(src.ch);
+}
+
+$('homeBtn').onclick = openHome;
+$('homeClose').onclick = closeHome;
+$('homeGo').onclick = openFromHome;
+$('homeReadAll').onclick = () => markRead();
+$('homeCheck').onclick = () => $('checkUpd').onclick();
+
+$('checkUpd').onclick = () => {
+  // Asking needs a click; a page opened from a file may not be allowed to notify at all.
+  try { if (window.Notification?.permission === 'default') Notification.requestPermission(); } catch {}
+  checkUpdates(true);
+};
+
+$('tabHist').onclick = () => openLists('hist');
+$('tabCh').onclick = () => openLists('ch');
+$('closeLists').onclick = closeLists;
+$('clearHist').onclick = () => {
+  if (!confirm('履歴をすべて消しますか？\nホームの作品一覧もすべて消えます。')) return;
+  marks.history = []; store.set('history', []); store.set('bookmarksBackup', []); renderLists();
+};
+
+// ---- navigation ----------------------------------------------------------
+
+// Stepping past either end once arms a chapter change; stepping again the same way takes it.
+// The short minimum gap keeps one flick of the wheel (inertia) from doing both.
+let edgeArm = null;
+function atEdge(delta) {
+  const now = Date.now();
+  if (edgeArm && edgeArm.delta === delta && now - edgeArm.at > 350 && now - edgeArm.at < 4000) {
+    edgeArm = null;
+    return chapter(delta, true);
+  }
+  if (!edgeArm || edgeArm.delta !== delta || now - edgeArm.at >= 4000) edgeArm = { delta, at: now };
+  flash(delta > 0 ? '最後のページ　もう一度で次の話へ' : '最初のページ　もう一度で前の話へ');
+}
+
+function step(delta) {
+  if (isBusy()) return;
+  const views = buildViews(loadedCount());
+  const vi = currentViewIndex(views);
+  if (vi < 0) return;
+  const ni = vi + delta;
+  if (ni < 0) return atEdge(delta);
+  if (ni >= views.length) {
+    if (state.total !== null) return atEdge(delta);
+    state.waitFwd = true;
+    return render();
+  }
+  edgeArm = null;
+  state.pos = views[ni][0];
+  render();
+}
+
+// Shift by a single page: make the target page start a view so pairing re-aligns from there.
+function stepPage(delta) {
+  if (isBusy()) return;
+  if (!state.spread) return step(delta);
+  const np = state.pos + delta;
+  if (np < 0) return flash('最初のページです');
+  if (np >= loadedCount()) return flash(state.total !== null ? '最後のページです' : '読み込み中…');
+  state.anchor = np; state.pos = np;
+  store.set('anchor', np);
+  render();
+}
+
+function jump(where) {
+  if (isBusy()) return;
+  const views = buildViews(loadedCount());
+  if (!views.length) return;
+  state.pos = where === 'first' ? 0 : views[views.length - 1][0];
+  render();
+}
+
+// Resolves 'ok' | 'missing' | 'timeout'. A hung request must not stall the search.
+const probe = (url, ms = PROBE_TIMEOUT) => new Promise(res => {
+  const img = new Image();
+  const timer = setTimeout(() => { img.src = ''; res('timeout'); }, ms);
+  img.onload = () => { clearTimeout(timer); res('ok'); };
+  img.onerror = () => { clearTimeout(timer); res('missing'); };
+  img.src = url;
+});
+
+async function probeOk(url) {
+  const r = await probe(url);
+  return r === 'timeout' ? (await probe(url, PROBE_TIMEOUT * 2)) === 'ok' : r === 'ok';
+}
+
+// If chapter t (in tenths) has a page 1, resolves to {t, sep, pp, ext, first} with the
+// variant that worked; otherwise null. Tried in stages by how much they differ from the
+// current one: the current alone, then everything one part off (the usual change,
+// e.g. page_0 → 0), then two parts off, … — so a full sweep only happens when needed.
+// minDiff/maxDiff limit the stages; fresh = cache-busted, patient requests (for re-checks).
+async function exists(src, t, { minDiff = 0, maxDiff = Infinity, fresh = false } = {}) {
+  const stages = [];
+  for (const v of variantsOf(src)) {
+    const d = diffOf(v, src);
+    if (d >= minDiff && d <= maxDiff) (stages[d] ||= []).push(v);
+  }
+  for (const group of stages) {
+    if (!group) continue;
+    const ok = await Promise.all(group.map(v => {
+      const url = pageUrl(src, t / 10, 1, v);
+      return fresh ? probe(bust(url), PROBE_TIMEOUT * 2).then(r => r === 'ok') : probeOk(url);
+    }));
+    const i = ok.indexOf(true);
+    if (i < 0) continue;
+    const hit = { t, ...group[i] };
+    // "…_1" also exists when pages start at 0, so a 1-based hit needs a look for a page 0.
+    if (hit.first === 1 && !src.aid && await probeOk(pageUrl(src, t / 10, 1, { ...hit, first: 0 }))) hit.first = 0;
+    return hit;
+  }
+  return null;
+}
+
+// Decimal chapters lo…hi (tenths) scanned upward, two at a time; two misses in a row
+// ends the scan. Returns the first hit, or with all=true every hit found.
+// Decimals are mostly misses, so by default only variants one part off the current are tried.
+async function scanFracs(src, lo, hi, all, moved, maxDiff = 1) {
+  const hits = [];
+  let misses = 0;
+  for (let t = lo; t <= hi; t += 2) {
+    const pair = [t, t + 1].filter(x => x <= hi);
+    const res = await Promise.all(pair.map(x => exists(src, x, { maxDiff })));
+    if (moved()) return null;
+    for (const hit of res) {
+      if (!hit) { if (++misses >= 2) return hits; continue; }
+      if (!all) return [hit];
+      hits.push(hit); misses = 0;
+    }
+  }
+  return hits;
+}
+
+// Probe page 1 of the neighbouring chapters first so we stay put when there is none.
+// toEnd: going back lands on the previous chapter's last page (used when scrolling backwards).
+async function chapter(delta, toEnd = false) {
+  if (isBusy()) return;
+  // Identity token, so a superseded search can't clear a newer one.
+  const mine = state.searching = { text: delta > 0 ? '次の話を探しています…' : '前の話を探しています…' };
+  updateBusy();
+  try { await findChapter(delta, toEnd); }
+  finally { if (state.searching === mine) { state.searching = null; updateBusy(); } }
+}
+
+async function findChapter(delta, toEnd) {
+  const src = state.src, from = toTenths(src.ch), token = state.loadToken;
+  const moved = () => token !== state.loadToken || src !== state.src;
+  // Whole-number sources (e.g. FC2) never have .1 steps; skip those probes.
+  const whole = !!src.aid;
+  const label = delta > 0 ? '次の話' : '前の話';
+  const go = hit => loadChapter(hit.t / 10, toEnd && delta < 0 ? Infinity : 0, -1, hit);
+  // The adjacent whole number, e.g. 87 → 88 / 87.5 → 88; backwards 88 → 87 / 87.3 → 87.
+  const near = delta > 0 ? (Math.floor(from / 10) + 1) * 10 : Math.floor((from - 1) / 10) * 10;
+  if (near < 0) return flash(`${label}はありません`);
+  // A chapter whose URL was set by hand can't be found by probing; take it from the list.
+  const custom = knownChapters(src).find(h => h.t === near && h.custom);
+  if (custom) return go(custom);
+
+  // With skipFracs on, decimals only stand in for a missing whole number (87 → 88 even if
+  // 87.5 exists). Off, the ones between here and the adjacent whole number come first.
+  const skipFracs = state.skipFracs || whole;
+  const ownLo = delta > 0 ? from + 1 : near + 1;
+  const ownHi = delta > 0 ? Math.floor(from / 10) * 10 + 9 : Math.min(near + 9, from - 1);
+
+  // 1. The adjacent whole number; with skipFracs off it's probed alongside the decimal
+  //    scan, so the usual case (no decimals) costs no extra wait.
+  // Every one of ownLo … ownHi (87.5 can follow 87 with no 87.1), in v's format.
+  const ownFracs = async v => {
+    if (ownLo > ownHi) return [];
+    const base = Math.floor(ownLo / 10) * 10;
+    return (await wholeFracs({ ...src, ...variantOf(v) }, base, ownLo - base)).filter(h => h.t <= ownHi);
+  };
+  const intP = exists(src, near);
+  if (!skipFracs) {
+    const fracs = await ownFracs(src);
+    if (moved()) return;
+    if (fracs.length) return go(delta > 0 ? fracs[0] : fracs[fracs.length - 1]);
+  }
+  const hit = await intP;
+  if (moved()) return;
+  // Going back, the decimals before here may be in the whole chapter's format rather than
+  // ours (back from 56.1/image_1.webp: 55 and 55.2 are page_0.jpg).
+  if (hit && !skipFracs && delta < 0 && diffOf(hit, src) > 0) {
+    const fracs = await ownFracs(hit);
+    if (moved()) return;
+    if (fracs.length) return go(fracs[fracs.length - 1]);
+  }
+  if (hit) return go(hit);
+  // 2. It's missing, so decimals may stand in for it: going forward the rest of ours
+  //    (87.3 → 87.4 …, unless scanned above) and then its own (88 missing → 88.1 …);
+  //    going back its own, highest first (88 → 87.9 … 87.1). Its own may have changed
+  //    format along with the numbering (55.2/page_0.jpg → 56.1/image_1.webp), so every
+  //    format is tried.
+  if (!whole) {
+    const ranges = delta > 0
+      ? [...(skipFracs ? [[ownLo, ownHi, 1]] : []), [near + 1, near + 9, Infinity]]
+      : [[ownLo, ownHi, Infinity]];
+    for (const [lo, hi, maxDiff] of ranges) {
+      const fracs = await scanFracs(src, lo, hi, delta < 0, moved, maxDiff);
+      if (fracs === null || moved()) return;
+      if (fracs.length) return go(delta > 0 ? fracs[0] : fracs[fracs.length - 1]);
+    }
+  }
+
+  // 3. Numbering gaps (62 → 66): the following whole numbers a window at a time, current
+  //    variant only; if none turns up, the first window again one part off.
+  const cur = variantOf(src);
+  const gapAt = k => near + delta * 10 * k;
+  let found = null;
+  for (let k = 1; k <= MAX_CHAPTER_GAP && !found; k += GAP_WINDOW) {
+    const ts = Array.from({ length: GAP_WINDOW }, (_, j) => gapAt(k + j)).filter(t => t >= 0);
+    if (!ts.length) break;
+    const ok = await Promise.all(ts.map(t => probeOk(pageUrl(src, t / 10, 1, cur))));
+    if (moved()) return;
+    const i = ok.indexOf(true);
+    if (i >= 0) found = { t: ts[i], ...cur };
+  }
+  if (!found) {
+    const ts = Array.from({ length: GAP_WINDOW }, (_, j) => gapAt(1 + j)).filter(t => t >= 0);
+    const hits = await Promise.all(ts.map(t => exists(src, t, { maxDiff: 1 })));
+    if (moved()) return;
+    found = hits.find(Boolean) || null;
+  }
+  // The format may have changed in more than one way across the gap (back from
+  // 56.1/image_1.webp with no 56: 55 is page_0.jpg); the nearest number gets every format.
+  if (!found && !whole && gapAt(1) >= 0) {
+    found = await exists(src, gapAt(1), { minDiff: 2 });
+    if (moved()) return;
+  }
+  if (found) {
+    // A "gap" may just be requests the host refused. Before skipping chapters, pause and
+    // re-check the skipped numbers with fresh requests; take the nearest that shows up.
+    if (state.searching) { state.searching.text = '飛ばす話がないか確認しています…'; updateBusy(); }
+    await new Promise(r => setTimeout(r, 1500));
+    if (moved()) return;
+    const skipped = [];
+    for (let t = near; t !== found.t; t += delta * 10) skipped.push(t);
+    // Wider variants for the nearest few; beyond that just the current one (a long gap
+    // would otherwise mean hundreds of requests).
+    const re = await Promise.all(skipped.map((t, j) =>
+      exists(src, t, { maxDiff: j < GAP_WINDOW ? 2 : 0, fresh: true })));
+    if (moved()) return;
+    const back = re.find(Boolean);
+    if (back) return go(back);
+    // Decimals inside the gap, nearest first (the adjacent number's were scanned above).
+    // X.1 … X.9 sit between X and X+1: forward that's after each skipped number; backward
+    // it's each skipped number's and, unless skipFracs, also the found one's (96 → 91.5
+    // before 91; with skipFracs 96 → 91).
+    if (!whole) {
+      const bases = (delta > 0 || skipFracs ? skipped.slice(1) : [...skipped.slice(1), found.t]).slice(0, GAP_WINDOW);
+      for (const s of bases) {
+        // The found chapter's own decimals are most likely in its format.
+        const fracs = await scanFracs(s === found.t ? { ...src, ...variantOf(found) } : src, s + 1, s + 9, delta < 0, moved);
+        if (fracs === null || moved()) return;
+        if (fracs.length) return go(delta > 0 ? fracs[0] : fracs[fracs.length - 1]);
+      }
+    }
+    go(found);
+    const a = chStr(Math.min(...skipped) / 10), b = chStr(Math.max(...skipped) / 10);
+    return msgNote(`第${skipped.length > 1 ? `${a}〜${b}` : a}話が見つからないため、第${chStr(found.t / 10)}話を開きました\n${pageUrl(src, skipped[0] / 10, 1)}`);
+  }
+
+  // 4. Nothing found. If the host was just throttling us, a pause and a fresh
+  //    (cache-busted) request for the adjacent whole chapter usually gets through.
+  {
+    if (state.searching) { state.searching.text = 'もう一度確認しています…'; updateBusy(); }
+    const tries = variantsOf(src).filter(v => diffOf(v, src) <= 1)
+      .map(v => ({ v, url: pageUrl(src, near / 10, 1, v) }));
+    let res = [];
+    for (const pause of [1500, 4000]) {
+      await new Promise(r => setTimeout(r, pause));
+      if (moved()) return;
+      res = await Promise.all(tries.map(x => probe(bust(x.url), PROBE_TIMEOUT * 2)));
+      if (moved()) return;
+      const i = res.indexOf('ok');
+      if (i >= 0) return go({ t: near, ...tries[i].v });
+    }
+    const why = res.includes('timeout') ? 'サイトから応答がありません（タイムアウト）' : 'サイトが画像を返しませんでした';
+    msgNote(`${label}が見つかりません\n${why}\n${tries[0].url}`);
+  }
+  flash(`${label}が見つかりません`);
+}
+
+const bust = url => url + (url.includes('?') ? '&' : '?') + '_=' + Date.now();
+
+// Transient note in the centre, used for diagnostics.
+let noteTimer;
+function msgNote(text) {
+  const prev = msg.textContent;
+  msg.textContent = text;
+  clearTimeout(noteTimer);
+  noteTimer = setTimeout(() => { if (msg.textContent === text) msg.textContent = prev; }, 5000);
+}
+
+let flashTimer;
+function flash(text) {
+  pageno.textContent = text;
+  pageno.classList.remove('hidden');
+  clearTimeout(flashTimer);
+  flashTimer = setTimeout(() => {
+    render();
+    if (bar.classList.contains('hidden')) pageno.classList.add('hidden');
+  }, 1200);
+}
+
+// "Forward" on screen depends on reading direction.
+const onLeft = (fn = step) => fn(state.rtl ? 1 : -1);
+const onRight = (fn = step) => fn(state.rtl ? -1 : 1);
+
+document.addEventListener('keydown', e => {
+  if (e.target.tagName === 'INPUT') {
+    if (e.key === 'Enter') ({ homeSrc: openFromHome, cpQuery: searchCovers }[e.target.id] || openFromInput)();
+    if (e.key === 'Escape' && pickerOpen()) closeCoverPicker();
+    return;
+  }
+  const k = e.key;
+  if (pickerOpen()) {
+    if (k === 'Escape') closeCoverPicker();
+    return;
+  }
+  if (homeOpen()) {
+    if (k === 'Escape' || k === 'm' || k === 'M') closeHome();
+    return;
+  }
+  if (k === 'm' || k === 'M') { openHome(); e.preventDefault(); return; }
+  if (k === 'l' || k === 'L') { listsOpen() ? closeLists() : openLists(); e.preventDefault(); return; }
+  if (k === 'g' || k === 'G') { listsOpen() && listTab === 'ch' ? closeLists() : openLists('ch'); e.preventDefault(); return; }
+  if (listsOpen()) { if (k === 'Escape') closeLists(); return; }
+  if (k === 'ArrowLeft') onLeft(e.shiftKey ? stepPage : step);
+  else if (k === 'ArrowRight') onRight(e.shiftKey ? stepPage : step);
+  else if (k === '.') stepPage(1);
+  else if (k === ',') stepPage(-1);
+  else if (k === ' ' || k === 'PageDown' || k === 'ArrowDown') step(e.shiftKey ? -1 : 1);
+  else if (k === 'PageUp' || k === 'ArrowUp' || k === 'Backspace') step(-1);
+  else if (k === 'Home') jump('first');
+  else if (k === 'End') jump('last');
+  else if (k === 'n' || k === 'N') chapter(1);
+  else if (k === 'p' || k === 'P') chapter(-1);
+  else if (k === 'd' || k === 'D') toggle('rtl');
+  else if (k === 's' || k === 'S') toggle('spread');
+  else if (k === 'c' || k === 'C') toggle('cover');
+  else if (k === 'z' || k === 'Z') toggle('fit');
+  else if (k === 'x' || k === 'X') { toggle('skipFracs'); flash(state.skipFracs ? '小数の話を飛ばす' : '小数の話も読む'); }
+  else if (k === 'f' || k === 'F') toggleFullscreen();
+  else if (k === 'h' || k === 'H') toggleBar();
+  else return;
+  e.preventDefault();
+});
+
+// Touch: swipe sideways to turn pages; a tap in the middle third shows the bar.
+let touch0 = null, lastTouch = 0, swiped = 0;
+stage.addEventListener('touchstart', e => {
+  lastTouch = Date.now();
+  touch0 = e.touches.length === 1 ? { x: e.touches[0].clientX, y: e.touches[0].clientY } : null;
+}, { passive: true });
+stage.addEventListener('touchend', e => {
+  lastTouch = Date.now();
+  if (!touch0 || e.touches.length || (window.visualViewport?.scale || 1) > 1.05) return (touch0 = null);
+  const t = e.changedTouches[0], dx = t.clientX - touch0.x, dy = t.clientY - touch0.y;
+  touch0 = null;
+  if (Math.abs(dx) < 50 || Math.abs(dx) < Math.abs(dy) * 1.5 || listsOpen()) return;
+  swiped = Date.now();
+  // Dragging right pulls in what's on the left, as if the left side was tapped.
+  if (dx > 0) onLeft(step); else onRight(step);
+}, { passive: true });
+
+stage.addEventListener('click', e => {
+  if (Date.now() - swiped < 600) return;
+  if (listsOpen()) return closeLists();
+  const touch = Date.now() - lastTouch < 800, x = e.clientX / window.innerWidth;
+  if (touch && x > 1 / 3 && x < 2 / 3) return showChrome();
+  const fn = e.shiftKey ? stepPage : step;
+  if (e.clientX < window.innerWidth / 2) onLeft(fn); else onRight(fn);
+});
+
+let wheelLock = 0;
+window.addEventListener('wheel', e => {
+  if (bar.contains(e.target) || lists.contains(e.target) || listsOpen() || homeOpen()) return;
+  const now = Date.now();
+  if (now < wheelLock || Math.abs(e.deltaY) < 10) return;
+  wheelLock = now + 250;
+  step(e.deltaY > 0 ? 1 : -1);
+}, { passive: true });
+
+// ---- toolbar -------------------------------------------------------------
+
+function toggle(key) { state[key] = !state[key]; store.set(key, state[key]); render(); }
+function toggleFullscreen() {
+  if (document.fullscreenElement) document.exitFullscreen();
+  else document.documentElement.requestFullscreen().catch(() => {});
+}
+// Auto-hide by default; H pins the bar.
+let barPinned = store.get('barPinned', false);
+function toggleBar() {
+  barPinned = !barPinned;
+  store.set('barPinned', barPinned);
+  flash(barPinned ? 'バーを常に表示' : 'バーを自動で隠す');
+  showChrome();
+}
+
+let hideTimer;
+function showChrome() {
+  bar.classList.remove('hidden'); pageno.classList.remove('hidden');
+  armHide();
+}
+// Re-armed whenever something that blocked hiding (hover, input focus, a flash) ends.
+function armHide() {
+  clearTimeout(hideTimer);
+  if (barPinned) return;
+  hideTimer = setTimeout(() => {
+    if (bar.matches(':hover') || document.activeElement === $('src')) return;
+    bar.classList.add('hidden'); pageno.classList.add('hidden');
+  }, 2000);
+}
+document.addEventListener('mousemove', e => { if (!barPinned && e.clientY < 80) showChrome(); });
+bar.addEventListener('mouseleave', armHide);
+$('src').addEventListener('blur', armHide);
+
+// Leading zeros mean fixed-width numbering (e.g. 003.jpg → width 3).
+const padOf = s => (s.length > 1 && s[0] === '0' ? s.length : 0);
+
+// Returns a source or an error string.
+function parseInput(v) {
+  const iid = v.match(/[?&]iid=(\d+)/);
+  if (iid) return fc2Src(+(v.match(/[?&]aid=(\d+)/) || [])[1] || state.src.aid || 1, +iid[1]);
+  if (/^\d+(\.\d)?$/.test(v)) return { ...state.src, ch: +v };
+  // e.g. https://example.com/xxx/chapter-12/003.jpg, …/chapter-12.5/page_0.webp
+  const m = v.match(/^(.*?chapter)([-_]?)(\d+)(\.\d)?(\D.*\D|\D)(\d+)\.(jpe?g|png|webp|gif|avif)(\?.*)?$/i);
+  // Split ".../chapter_79" + "/page_" into the folder part and the file-name prefix.
+  const slash = m && m[5].lastIndexOf('/');
+  if (m) {
+    const [tpl, hp] = splitHostPrefix(m[1] + '{sep}{ch}' + (slash >= 0 ? m[5].slice(0, slash + 1) + '{pp}' : m[5]) + '{p}.{ext}' + (m[8] || ''));
+    return {
+      tpl, hp, sep: m[2], pp: slash >= 0 ? m[5].slice(slash + 1) : undefined, ext: m[7],
+      ch: +(m[3] + (m[4] || '')), chPad: padOf(m[3]), pad: padOf(m[6]), first: +m[6] === 0 ? 0 : 1,
+    };
+  }
+  if (/chapter[-_]?\d+/i.test(v)) return 'ページ内の画像のURLを貼ってください（画像を右クリック →「画像アドレスをコピー」）';
+  return 'URL か話数の番号を入力してください';
+}
+
+function openFromInput() {
+  const src = parseInput($('src').value.trim());
+  if (typeof src === 'string') return flash(src);
+  $('src').blur();
+  state.src = src;
+  loadChapter(src.ch);
+}
+
+$('go').onclick = openFromInput;
+$('prevCh').onclick = () => chapter(-1);
+$('nextCh').onclick = () => chapter(1);
+$('dirBtn').onclick = () => toggle('rtl');
+$('spreadBtn').onclick = () => toggle('spread');
+$('coverBtn').onclick = () => toggle('cover');
+$('fitBtn').onclick = () => toggle('fit');
+$('skipFracsBtn').onclick = () => toggle('skipFracs');
+$('pageBack').onclick = () => stepPage(-1);
+$('pageFwd').onclick = () => stepPage(1);
+$('fsBtn').onclick = toggleFullscreen;
+$('listBtn').onclick = () => listsOpen() ? closeLists() : openLists();
+$('chListBtn').onclick = () => listsOpen() && listTab === 'ch' ? closeLists() : openLists('ch');
+bar.addEventListener('click', e => e.target.blur && e.target.tagName === 'BUTTON' && e.target.blur());
+
+// Open in more than one tab, each tab saves its whole copy of a list; without this, a tab
+// with an old copy (e.g. one running the new-chapter check) writes over what another saved.
+// Re-reads one saved list into the copy this page works with; false if it isn't one.
+function reloadKey(k) {
+  const objs = { chapters: chapterCache, updates, seriesTitles, seriesAdded, seriesCovers };
+  if (k === 'history') marks.history = store.get('history', []);
+  else if (k === 'syncStamps') sync.stamps = store.get('syncStamps', null);
+  else if (objs[k]) {
+    const o = objs[k], v = store.get(k, {});
+    for (const x of Object.keys(o)) delete o[x];
+    Object.assign(o, v);
+  } else return false;
+  return true;
+}
+function rerenderAll() {
+  refreshUpdates();
+  if (homeOpen()) renderHome();
+  if (listsOpen()) renderLists();
+}
+window.addEventListener('storage', ev => {
+  const k = ev.key?.startsWith('mv.') && ev.key.slice(3);
+  if (k && reloadKey(k) && k !== 'syncStamps') rerenderAll();
+});
+
+// ---- sync (GitHub Gist) --------------------------------------------------
+// The series lists and history are kept in one secret gist, so every device (PC, phone)
+// sees the same. Each entry (one history chapter, one series' title / chapter list / …)
+// carries the time it last changed here; merging takes the newer side entry by entry, and
+// a removed entry leaves its time behind so the removal wins over an older copy elsewhere.
+const SYNC_KEYS = ['history', 'seriesTitles', 'seriesAdded', 'seriesCovers', 'chapters', 'updates'];
+const SYNC_FILE = 'manga-viewer-sync.json';
+const SYNC_EVERY = 5 * 60 * 1000, SYNC_DELAY = 8000, TOMB_KEEP = 90 * 864e5;
+const sync = { token: store.get('syncToken', ''), gist: store.get('syncGist', ''), at: store.get('syncAt', 0),
+  stamps: store.get('syncStamps', null), busy: false, again: false, timer: 0, err: '' };
+
+const subsOf = (k, v) => k === 'history'
+  ? Object.fromEntries((v || []).map(e => [seriesKey(e.src) + '|' + e.src.ch, e]))
+  : { ...(v || {}) };
+const fromSubs = (k, subs) => k === 'history' ? trimHistory(Object.values(subs)) : subs;
+const saveStamps = () => { sync.applying = true; store.set('syncStamps', sync.stamps); sync.applying = false; };
+
+// Called by store.set before a list is saved: stamp the entries that changed.
+store.beforeSet = (k, v) => {
+  if (!sync.token || sync.applying || !SYNC_KEYS.includes(k)) return;
+  const prev = subsOf(k, store.get(k)), next = subsOf(k, v), st = (sync.stamps ||= {})[k] ||= {}, now = Date.now();
+  let changed = false;
+  for (const sub of new Set([...Object.keys(prev), ...Object.keys(next)]))
+    if (JSON.stringify(prev[sub]) !== JSON.stringify(next[sub])) { st[sub] = now; changed = true; }
+  if (changed) { saveStamps(); schedulePush(); }
+};
+
+// Entry by entry, the newer of here and the gist. pushNeeded: the gist lacks something.
+function mergeRemote(remote) {
+  const out = { v: 1, data: {}, stamps: {} }, cutoff = Date.now() - TOMB_KEEP;
+  let pushNeeded = !remote?.data;
+  for (const k of SYNC_KEYS) {
+    const L = subsOf(k, store.get(k)), Ls = sync.stamps[k] || {};
+    const R = remote?.data?.[k] || {}, Rs = remote?.stamps?.[k] || {};
+    const D = {}, S = {};
+    for (const sub of new Set([...Object.keys(L), ...Object.keys(Ls), ...Object.keys(R), ...Object.keys(Rs)])) {
+      const lt = Ls[sub] || 0, rt = Rs[sub] || 0, val = rt > lt ? R[sub] : L[sub], ts = Math.max(lt, rt);
+      if (val === undefined && ts < cutoff) { if (sub in Rs) pushNeeded = true; continue; } // long-gone: forget
+      if (rt !== ts || JSON.stringify(val) !== JSON.stringify(R[sub])) pushNeeded = true;
+      S[sub] = ts;
+      if (val !== undefined) D[sub] = val;
+    }
+    if (k === 'history') { // the newest 100 + each series' newest; the rest count as removed
+      const kept = subsOf(k, fromSubs(k, D));
+      for (const sub of Object.keys(D)) if (!(sub in kept)) { delete D[sub]; S[sub] = Date.now(); pushNeeded = true; }
+    }
+    out.data[k] = D; out.stamps[k] = S;
+  }
+  return { out, pushNeeded };
+}
+
+function applyMerged(out) {
+  let changed = false;
+  sync.applying = true;
+  try {
+    for (const k of SYNC_KEYS) {
+      const cur = subsOf(k, store.get(k)), next = out.data[k];
+      const same = Object.keys(cur).length === Object.keys(next).length &&
+        Object.keys(next).every(s => JSON.stringify(cur[s]) === JSON.stringify(next[s]));
+      if (same) continue;
+      store.set(k, fromSubs(k, next));
+      reloadKey(k);
+      changed = true;
+    }
+  } finally { sync.applying = false; }
+  sync.stamps = out.stamps;
+  saveStamps();
+  if (changed) rerenderAll();
+}
+
+async function gh(path, opt = {}) {
+  const r = await fetch('https://api.github.com' + path, { ...opt, cache: 'no-store', headers: {
+    Authorization: 'Bearer ' + sync.token, Accept: 'application/vnd.github+json',
+    ...(opt.body ? { 'Content-Type': 'application/json' } : {}) } });
+  if (!r.ok) {
+    const err = new Error(r.status === 401 ? '合言葉（トークン）が正しくないか、期限切れです'
+      : r.status === 403 || r.status === 404 && !sync.gist ? 'トークンに gist の権限がありません' : `GitHub エラー ${r.status}`);
+    err.status = r.status;
+    throw err;
+  }
+  return r.json();
+}
+// The gist made by another device, found by its file name; else a new secret one.
+async function ensureGist() {
+  if (sync.gist) return;
+  for (let page = 1; page <= 10 && !sync.gist; page++) {
+    const list = await gh(`/gists?per_page=100&page=${page}`);
+    sync.gist = list.find(g => g.files?.[SYNC_FILE])?.id || '';
+    if (list.length < 100) break;
+  }
+  if (!sync.gist) sync.gist = (await gh('/gists', { method: 'POST', body: JSON.stringify({
+    description: '見開きビューアの同期データ', public: false, files: { [SYNC_FILE]: { content: '{}' } } }) })).id;
+  store.set('syncGist', sync.gist);
+}
+async function readGist() {
+  const f = (await gh(`/gists/${sync.gist}`)).files?.[SYNC_FILE];
+  if (!f) return null;
+  const text = f.truncated ? await (await fetch(f.raw_url, { cache: 'no-store' })).text() : f.content;
+  try { return JSON.parse(text); } catch { return null; }
+}
+
+async function syncNow(manual = false) {
+  clearTimeout(sync.timer);
+  if (!sync.token) return;
+  if (sync.busy) { sync.again = true; return; }
+  sync.busy = true; sync.err = ''; renderSync();
+  try {
+    for (let attempt = 0; ; attempt++) {
+      try {
+        await ensureGist();
+        const { out, pushNeeded } = mergeRemote(await readGist());
+        applyMerged(out); // no waiting between the merge and this: nothing changes in between
+        if (pushNeeded) await gh(`/gists/${sync.gist}`, { method: 'PATCH',
+          body: JSON.stringify({ files: { [SYNC_FILE]: { content: JSON.stringify(out) } } }) });
+        break;
+      } catch (err) {
+        // The gist was deleted: look for (or make) another once.
+        if (err.status === 404 && sync.gist && !attempt) { sync.gist = ''; store.set('syncGist', ''); continue; }
+        throw err;
+      }
+    }
+    sync.at = Date.now(); store.set('syncAt', sync.at);
+    if (manual) flash('同期しました');
+  } catch (err) {
+    sync.err = err.message || String(err);
+    if (manual) alert('同期できませんでした\n' + sync.err);
+  } finally {
+    sync.busy = false;
+    renderSync();
+    if (sync.again) { sync.again = false; schedulePush(); }
+  }
+}
+function schedulePush() {
+  clearTimeout(sync.timer);
+  if (sync.token) sync.timer = setTimeout(syncNow, SYNC_DELAY);
+}
+
+function renderSync() {
+  const b = $('syncBtn');
+  b.textContent = !sync.token ? '同期の設定' : sync.busy ? '同期中…' : sync.err ? '同期 ⚠' : `同期 ${sync.at ? new Date(sync.at).toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit' }) : ''}`;
+  b.title = !sync.token ? 'PC・スマホで作品一覧と履歴を共有する（GitHub Gist）'
+    : sync.err ? `同期できていません：${sync.err}\n押すともう一度試します` : '押すと今すぐ同期します';
+  b.classList.toggle('new', !!sync.err);
+  $('syncSet').style.display = sync.token ? '' : 'none';
+}
+function setupSync() {
+  const t = prompt(
+    'PC・スマホで作品一覧と履歴を共有します（GitHub の非公開メモ＝Gist に保存）。\n\n' +
+    '1. GitHub にログインし、Settings → Developer settings → Personal access tokens → Tokens (classic) → Generate new token (classic)\n' +
+    '2. 権限は「gist」だけにチェックして作成\n' +
+    '3. 表示されたトークン（ghp_…）をここに貼り付け\n\n' +
+    'ほかの端末でも同じトークンを入れると、同じデータを共有します。' +
+    (sync.token ? '\n空欄にすると、この端末の同期を止めます（データは残ります）。' : ''), '');
+  if (t === null) return;
+  const token = t.trim();
+  if (!token) {
+    if (!sync.token || !confirm('この端末の同期を止めますか？')) return;
+    Object.assign(sync, { token: '', gist: '', err: '' });
+    for (const k of ['syncToken', 'syncGist', 'syncStamps']) localStorage.removeItem('mv.' + k);
+    return renderSync();
+  }
+  const first = !sync.token;
+  Object.assign(sync, { token, gist: '', err: '' });
+  store.set('syncToken', token); store.set('syncGist', '');
+  if (first || !sync.stamps) {
+    // What's here so far counts as old: where the gist already has an entry, the gist's wins.
+    sync.stamps = {};
+    for (const k of SYNC_KEYS) sync.stamps[k] = Object.fromEntries(Object.keys(subsOf(k, store.get(k))).map(s => [s, 1]));
+    saveStamps();
+  }
+  syncNow(true);
+}
+$('syncBtn').onclick = () => !sync.token ? setupSync() : syncNow(true);
+$('syncSet').onclick = setupSync;
+renderSync();
+
+// ---- start ---------------------------------------------------------------
+
+// Start on the home screen when there is anything to list; otherwise straight into reading.
+if (marks.history.length) openHome();
+else loadChapter(state.src.ch, store.get('pos', 0), store.get('anchor', -1));
+showChrome();
+refreshUpdates();
+// New-chapter check: shortly after opening (unless one ran recently), then periodically.
+setTimeout(() => { if (Date.now() - store.get('updatesAt', 0) >= UPDATE_EVERY) checkUpdates(); }, 5000);
+setInterval(checkUpdates, UPDATE_EVERY);
+// Installed as an app (web version only; opened as a local file there's nothing to install).
+if (location.protocol === 'https:' && 'serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
+// Back on screen after a while (phones pause hidden pages): catch up on the new-chapter check.
+// Sync: on opening, every few minutes, and whenever the page is shown or hidden again.
+setTimeout(syncNow, 1500);
+setInterval(syncNow, SYNC_EVERY);
+document.addEventListener('visibilitychange', () => {
+  syncNow();
+  if (!document.hidden && Date.now() - store.get('updatesAt', 0) >= UPDATE_EVERY) checkUpdates();
+});
+</script>
+</body>
+</html>

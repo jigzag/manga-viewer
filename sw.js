@@ -1,6 +1,6 @@
 // Keeps the app itself (this site's own files) for offline start. Images from other
 // sites are never touched: the viewer's page probes must always reach the network.
-const CACHE = 'viewer-v1';
+const CACHE = 'viewer-v2';
 const FILES = ['./', 'index.html', 'manifest.webmanifest', 'icon-192.png', 'icon-512.png'];
 self.addEventListener('install', e => { self.skipWaiting(); e.waitUntil(caches.open(CACHE).then(c => c.addAll(FILES))); });
 self.addEventListener('activate', e => e.waitUntil(self.clients.claim()));
